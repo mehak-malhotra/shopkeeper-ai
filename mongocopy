@@ -1,0 +1,22 @@
+from pymongo import MongoClient
+
+# Source and Destination URIs
+source_client = MongoClient("mongodb://localhost:27017/")
+dest_client = MongoClient("mongodb+srv://dhallhimanshu1234:9914600112%40DHALLh@himanshudhall.huinsh2.mongodb.net/")
+
+source_db = source_client["shop_db"]
+dest_db = dest_client["shop_db"]
+
+# Loop through collections
+for collection_name in source_db.list_collection_names():
+    source_collection = source_db[collection_name]
+    dest_collection = dest_db[collection_name]
+
+    # Fetch all documents from source
+    documents = list(source_collection.find())
+
+    if documents:
+        # Insert into destination
+        dest_collection.insert_many(documents)
+
+print("Database copy complete.")
