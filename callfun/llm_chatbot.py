@@ -36,23 +36,27 @@ def get_inventory():
 
 def llm_respond(messages, inventory, customer=None, ask_for_notes=False):
     prompt = (
-        "You are a friendly, helpful shop assistant AI. "
-        "First, always ask for the user's name and phone number. "
-        "After receiving both, check if the customer exists in the database (the system will do this lookup). "
-        "If the customer exists, confirm their details and proceed to order-taking. "
-        "If not, ask for their address and email, and record them. "
-        "Take the order as usual, matching items to inventory even if misspelled. "
-        "At the end, before finalizing the order, always ask for any special instructions or delivery notes, and include them as 'notes' in the order JSON. "
-        "When the user confirms the order, output a JSON block with the following structure: "
-        "{ 'customer': { 'name': ..., 'phone': ..., 'address': ..., 'user_email': ... }, 'order': { 'items': [...], 'total': ..., 'notes': ... } } "
-        "If the user provides any special instructions or delivery notes, include them as 'notes' in the order JSON. "
-        "If any item in the order is out of stock, inform the user and ask them to adjust their order. "
-        + (f"Here is the current customer info: {json.dumps(customer)}. " if customer else "")
-        + ("Please ask for special instructions or notes now." if ask_for_notes else "")
-        + "Here is the current inventory: " + json.dumps(inventory) + ". "
-        + "Conversation so far: " + json.dumps(messages) + ". "
-        "Respond as a real person would, in a friendly and natural way."
-    )
+    "You are a friendly, helpful shop assistant AI. "
+    "Keep your conversation concise and use simple vocabulary. Avoid overly complex or verbose responses. "
+    "First, collect all required customer details and order items. "
+    
+    # --- Start of New Instructions ---
+    "After the user adds an item, only confirm the addition (e.g., 'Added 3 Bananas to your cart.'). Do not repeat the entire order unless the user asks for it (e.g., 'what is my order', 'show my cart', 'order summary'). "
+    "When the user says they are done ordering, only tell them the number of items in their cart and the total price (e.g., 'You have 5 items in your cart. The total is ₹1200.'). Do not list all items unless the user asks for a summary. "
+    # --- End of New Instructions ---
+    
+    "After summarizing the order, always ask the user to confirm the total price before finalizing. "
+    "At the end, before placing the order, always ask for any special instructions or delivery notes, and include them as 'notes' in the order JSON. "
+    "Only output the final JSON block (with all customer and order details) after the user has confirmed the price and provided notes (or explicitly said there are none). "
+    "After the order is placed and all tasks are done, always end the conversation with a friendly goodbye message. "
+    "If the user provides any special instructions or delivery notes, include them as 'notes' in the order JSON. "
+    "If any item in the order is out of stock, inform the user and ask them to adjust their order. "
+    + (f"Here is the current customer info: {json.dumps(customer)}. " if customer else "")
+    + ("Please ask for special instructions or notes now." if ask_for_notes else "")
+    + "Here is the current inventory: " + json.dumps(inventory) + ". "
+    + "Conversation so far: " + json.dumps(messages) + ". "
+    "Respond as a real person would, in a friendly and natural way."
+)
     response = model.generate_content(prompt)
     return response.text
 
@@ -112,19 +116,46 @@ else:
     messages.append({"role": "user", "content": address})
     messages.append({"role": "user", "content": user_email})
 
-# Step 4: Order-taking and LLM-driven conversation
+# Fully dynamic, LLM-driven conversation loop (no static input for name/phone/address/email)
 while True:
-    # If we haven't asked for notes yet and the user is about to confirm, set ask_for_notes True
-    response = llm_respond(messages, inventory, customer, ask_for_notes=ask_for_notes)
+    # 1. Pass conversation, known customer info (if any), and inventory to LLM
+    response = llm_respond(messages, inventory, customer)
     print(f"Bot: {response}")
     messages.append({"role": "assistant", "content": response})
-    # Try to extract order/customer JSON if present
+
+    # 2. Try to extract JSON with all required info
     data = extract_json(response)
-    if data and 'customer' in data and 'order' in data and not order_placed:
-        # Place order in DB
-        customer = data['customer']
-        order = data['order']
-        # Check inventory for each item before placing order
+    order_detected = False
+
+    # Check for all possible key sets
+    if data:
+        # 1. Standard keys
+        if 'customer' in data and 'order' in data:
+            customer = data['customer']
+            order = data['order']
+            order_detected = True
+        # 2. Alternative keys
+        elif 'customer_details' in data and 'order_details' in data:
+            customer = data['customer_details']
+            order = data['order_details']
+            order_detected = True
+        # 3. Flat keys (as in your latest LLM output)
+        elif 'customer_name' in data and 'order_items' in data:
+            customer = {
+                "name": data.get("customer_name", ""),
+                "phone": data.get("phone", ""),
+                "address": data.get("address", ""),
+                "user_email": data.get("user_email", "")
+            }
+            order = {
+                "items": data.get("order_items", []),
+                "total": data.get("total", data.get("total_price", 0)),
+                "notes": data.get("notes", "")
+            }
+            order_detected = True
+
+    if order_detected:
+        # 3. Check inventory and update DB as before
         can_fulfill = True
         for it in order.get('items', []):
             db_item = collection.find_one({"user_email": fixed_inventory_email, "name": it["name"]})
@@ -133,49 +164,62 @@ while True:
                 can_fulfill = False
         if not can_fulfill:
             continue
-        # Atomic decrement
         for it in order.get('items', []):
             result = collection.update_one(
-                {"user_email": fixed_inventory_email, "name": it["name"], "quantity": {"$gte": it["quantity"]}},
+                {
+                    "user_email": fixed_inventory_email,
+                    "name": {"$regex": f"^{re.escape(it['name'])}$", "$options": "i"},
+                    "quantity": {"$gte": it["quantity"]}
+                },
                 {"$inc": {"quantity": -it["quantity"]}}
             )
             if result.modified_count == 0:
-                print(f"Bot: Sorry, {it['name']} just went out of stock. Please adjust your order.")
+                print(f"Bot: Sorry, {it['name']} just went out of stock or name mismatch. Please adjust your order.")
                 can_fulfill = False
                 break
         if not can_fulfill:
             continue
-        # Upsert customer
         customers_collection.update_one(
             {"customerPhone": customer.get("phone", "")},
-            {"$set": {"customerName": customer.get("name", ""), "address": customer.get("address", ""), "user_email": customer.get("user_email", user_email or fixed_inventory_email)}},
+            {"$set": {
+                "customerPhone": customer.get("phone", ""),
+                "customerName": customer.get("name", ""),
+                "address": customer.get("address", ""),
+                "user_email": customer.get("user_email", fixed_inventory_email)
+            }},
             upsert=True
         )
-        # Insert order with custom id, timestamp, and notes
         order_id = f"ORDER{random.randint(100,999)}"
         timestamp = datetime.utcnow().isoformat() + "Z"
+        # Try to get notes from the order object, then from the root, else default to empty string
+        notes = (
+            order.get("notes") or
+            data.get("notes") or
+            ""
+        )
+        # Normalize "None" (string) and None (null) to empty string
+        if notes is None or str(notes).strip().lower() == "none":
+            notes = ""
         order_doc = {
             "id": order_id,
             "customerPhone": customer.get("phone", ""),
             "customerName": customer.get("name", ""),
             "items": order.get("items", []),
-            "total": order.get("total", 0),
+            "total": order.get("total", order.get("total_price", 0)),
             "status": "pending",
             "timestamp": timestamp,
-            "notes": order.get("notes", ""),
-            "user_email": customer.get("user_email", user_email or fixed_inventory_email),
+            "notes": notes,
+            "user_email": customer.get("user_email", fixed_inventory_email),
             "address": customer.get("address", "")
         }
         orders_collection.insert_one(order_doc)
         print("Bot: Your order has been placed! Thank you.")
         print("Bot: It was great talking to you! Have a wonderful day!")
-        order_placed = True
         break
-    # If we haven't asked for notes yet, do so before final confirmation
-    if not ask_for_notes:
-        ask_for_notes = True
+
+    # 3. Get next user input (text or voice)
     user_input = input("You: ")
     messages.append({"role": "user", "content": user_input})
     if any(word in user_input.lower() for word in ["bye", "thank you", "thanks", "exit", "quit"]):
         print("Bot: It was great talking to you! Have a wonderful day!")
-        break 
+        break

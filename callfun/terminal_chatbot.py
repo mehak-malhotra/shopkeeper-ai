@@ -214,6 +214,8 @@ while status == "in_progress":
             else:
                 status = "finalized"
                 print("Thank you! Your order has been placed. Have a great day!")
+                if any(bye in response.lower() for bye in ["have a great day", "thank you", "goodbye", "it was great talking to you"]):
+                    break
         else:
             print("Order cancelled. If you want to start over, please run the assistant again.")
             break
