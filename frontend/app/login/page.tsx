@@ -45,7 +45,7 @@ export default function LoginPage() {
         });
         router.push("/dashboard");
       } else {
-        setError(data.message || "Invalid email or password");
+        setError("Invalid email or password");
       }
     } catch (err) {
       setError("Login failed. Please try again.");

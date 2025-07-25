@@ -187,7 +187,7 @@ export default function ProfilePage() {
                   <Store className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                   <Input
                     id="shopName"
-                    value={profile.shopName}
+                    value={profile.shopName || ""}
                     onChange={(e) => handleInputChange("shopName", e.target.value)}
                     placeholder="Enter your shop name"
                     className="pl-10"
@@ -202,7 +202,7 @@ export default function ProfilePage() {
                   <User className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                   <Input
                     id="ownerName"
-                    value={profile.ownerName}
+                    value={profile.ownerName || ""}
                     onChange={(e) => handleInputChange("ownerName", e.target.value)}
                     placeholder="Enter your full name"
                     className="pl-10"
@@ -217,7 +217,7 @@ export default function ProfilePage() {
                   <Input
                     id="email"
                     type="email"
-                    value={profile.email}
+                    value={profile.email || ""}
                     onChange={(e) => handleInputChange("email", e.target.value)}
                     placeholder="Enter your email"
                     className="pl-10"
@@ -233,7 +233,7 @@ export default function ProfilePage() {
                   <Input
                     id="phone"
                     type="tel"
-                    value={profile.phone}
+                    value={profile.phone || ""}
                     onChange={(e) => handleInputChange("phone", e.target.value)}
                     placeholder="Enter your phone number"
                     className="pl-10"
@@ -248,7 +248,7 @@ export default function ProfilePage() {
                   <MapPin className="absolute left-3 top-3 text-gray-400 h-4 w-4" />
                   <textarea
                     id="address"
-                    value={profile.address}
+                    value={profile.address || ""}
                     onChange={(e) => handleInputChange("address", e.target.value)}
                     placeholder="Enter your shop address"
                     className="min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 pl-10 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"

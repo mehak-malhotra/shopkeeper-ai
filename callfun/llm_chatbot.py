@@ -6,29 +6,28 @@ import google.generativeai as genai
 import random
 from datetime import datetime
 import re
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+MONGO_URI = os.getenv("MONGO_URI")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 # LLM setup (Gemini)
-GEMINI_API_KEY = "AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk"
 GEMINI_MODEL = "gemini-2.0-flash"
-genai.configure(api_key=GEMINI_API_KEY)
+genai.configure(api_key='AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk')
 model = genai.GenerativeModel(GEMINI_MODEL)
 
-# MongoDB setup (for inventory and customer lookups)
-client = MongoClient(
-    "mongodb+srv://dhallhimanshu1234:9914600112%40DHALLh@himanshudhall.huinsh2.mongodb.net/",
-    tls=True,
-    tlsCAFile=certifi.where()
-)
-db = client['shop_db']
+# MongoDB setup (use shop_0001, same as backend)
+client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
+db = client['shop_0001']
 collection = db["inventory"]
 customers_collection = db["customers"]
 orders_collection = db["orders"]
 
-fixed_inventory_email = "dhallhimanshu1234@gmail.com"
-
 # Helper to get current inventory as a list of dicts
 def get_inventory():
-    docs = list(collection.find({"user_email": fixed_inventory_email}))
+    docs = list(collection.find({}))
     return [{"name": doc["name"], "quantity": doc["quantity"], "price": doc["price"]} for doc in docs]
 
 # Helper to call Gemini LLM for a conversational response
@@ -158,7 +157,9 @@ while True:
         # 3. Check inventory and update DB as before
         can_fulfill = True
         for it in order.get('items', []):
-            db_item = collection.find_one({"user_email": fixed_inventory_email, "name": it["name"]})
+            db_item = collection.find_one({
+                "name": {"$regex": f"^{re.escape(it['name'])}$", "$options": "i"}
+            })
             if not db_item or db_item["quantity"] < it["quantity"]:
                 print(f"Bot: Sorry, we only have {db_item['quantity'] if db_item else 0} {it['name']} left. Please adjust your order.")
                 can_fulfill = False
@@ -167,7 +168,6 @@ while True:
         for it in order.get('items', []):
             result = collection.update_one(
                 {
-                    "user_email": fixed_inventory_email,
                     "name": {"$regex": f"^{re.escape(it['name'])}$", "$options": "i"},
                     "quantity": {"$gte": it["quantity"]}
                 },
@@ -185,37 +185,37 @@ while True:
                 "customerPhone": customer.get("phone", ""),
                 "customerName": customer.get("name", ""),
                 "address": customer.get("address", ""),
-                "user_email": customer.get("user_email", fixed_inventory_email)
+                "user_email": customer.get("user_email", "")
             }},
             upsert=True
         )
-        order_id = f"ORDER{random.randint(100,999)}"
-        timestamp = datetime.utcnow().isoformat() + "Z"
-        # Try to get notes from the order object, then from the root, else default to empty string
-        notes = (
-            order.get("notes") or
-            data.get("notes") or
-            ""
-        )
-        # Normalize "None" (string) and None (null) to empty string
-        if notes is None or str(notes).strip().lower() == "none":
-            notes = ""
-        order_doc = {
-            "id": order_id,
-            "customerPhone": customer.get("phone", ""),
-            "customerName": customer.get("name", ""),
-            "items": order.get("items", []),
-            "total": order.get("total", order.get("total_price", 0)),
-            "status": "pending",
-            "timestamp": timestamp,
-            "notes": notes,
-            "user_email": customer.get("user_email", fixed_inventory_email),
-            "address": customer.get("address", "")
+        # When an order is ready to be placed, send it to the backend for creation
+        import requests
+
+        BACKEND_URL = "http://localhost:5000/api/orders"
+
+        order_payload = {
+            'customerPhone': customer.get('phone', ''),
+            'customerName': customer.get('name', ''),
+            'items': order.get('items', []),
+            'total': order.get('total', 0),
+            'status': order.get('status', 'pending'),
+            'timestamp': datetime.utcnow().isoformat() + "Z",
+            'notes': order.get('notes', ''),
         }
-        orders_collection.insert_one(order_doc)
-        print("Bot: Your order has been placed! Thank you.")
-        print("Bot: It was great talking to you! Have a wonderful day!")
-        break
+        response = requests.post(BACKEND_URL, json=order_payload)
+        if response.ok:
+            backend_order = response.json().get('data', {})
+            order_id = backend_order.get('id', '')
+            print(f"Bot: Order placed successfully! Your order ID is {order_id}.")
+            break  # Exit the loop after successful order placement
+        else:
+            print("Bot: Failed to place order. Please try again later.")
+            retry_input = input("Bot: Would you like to try again? (yes/no): ").strip().lower()
+            if retry_input in ["no", "n", "exit", "quit"]:
+                print("Bot: It was great talking to you! Have a wonderful day!")
+                break
+        continue
 
     # 3. Get next user input (text or voice)
     user_input = input("You: ")

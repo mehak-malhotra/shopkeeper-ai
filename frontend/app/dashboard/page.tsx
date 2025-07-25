@@ -76,7 +76,8 @@ export default function DashboardPage() {
         const invRes = await fetch(`http://localhost:5000/api/inventory?user_email=${encodeURIComponent(user.email)}`)
         const invData = await invRes.json()
         if (invData.success) {
-          const lowStock = invData.data.filter((item: any) => item.quantity <= item.minStock)
+          const lowStock = invData.data
+            .filter((item: any) => item.quantity <= item.minStock)
             .map((item: any) => ({
               id: item.id,
               name: item.name,
@@ -200,7 +201,9 @@ export default function DashboardPage() {
                             {order.status}
                           </Badge>
                         </div>
-                        <p className="text-sm text-muted-foreground mb-1">{order.items.join(", ")}</p>
+                        <p className="text-sm text-muted-foreground mb-1">
+                          {order.items.map((item: any) => `${item.name} (${item.quantity})`).join(", ")}
+                        </p>
                         <p className="text-xs text-muted-foreground">{formatTime(order.timestamp)}</p>
                       </div>
                       <div className="text-right">
@@ -230,21 +233,21 @@ export default function DashboardPage() {
                   {lowStockItems.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between p-4 rounded-lg border border-orange-200 bg-orange-50"
+                      className="flex items-center justify-between p-4 rounded-lg border border-red-500 bg-gray-900"
                     >
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
-                          <Package className="h-4 w-4 text-orange-600" />
-                          <span className="font-medium">{item.name}</span>
+                          <Package className="h-4 w-4 text-red-400" />
+                          <span className="font-medium text-red-300">{item.name}</span>
                         </div>
-                        <p className="text-sm text-orange-700">
+                        <p className="text-sm text-red-400">
                           {item.currentStock} left (Min: {item.minStock})
                         </p>
                       </div>
                       <Button
                         variant="outline"
                         size="sm"
-                        className="border-orange-300 text-orange-700 hover:bg-orange-100 bg-transparent"
+                        className="border-red-500 text-red-400 hover:bg-red-900/30 bg-transparent"
                       >
                         Restock
                       </Button>

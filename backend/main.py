@@ -8,21 +8,61 @@ import requests as ext_requests
 import certifi
 import re
 from difflib import get_close_matches
+from datetime import datetime
+import hashlib
 
 # Flask and CORS
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+# Update CORS
+CORS(app, resources={r"/*": {"origins": ["http://localhost:3000"]}}, supports_credentials=True)
+
 
 # MongoDB connection
-client = MongoClient(
-    "mongodb+srv://dhallhimanshu1234:9914600112%40DHALLh@himanshudhall.huinsh2.mongodb.net/",
-    tls=True,
-    tlsCAFile=certifi.where()
-)  # Cloud MongoDB
-db = client['shop_db']
-inventory_col = db['inventory']
-orders_col = db['orders']
-customers_col = db['customers'] # Added customers collection
+try:
+    load_dotenv()
+    MONGO_URI = os.getenv("MONGO_URI")
+    GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+    GEMINI_API_URL = os.getenv("GEMINI_API_URL")
+    client = MongoClient(
+        MONGO_URI,
+        tls=True,
+        tlsCAFile=certifi.where(),
+        serverSelectionTimeoutMS=5000  # 5 second timeout
+    )
+    # Test the connection
+    client.server_info()
+    print("MongoDB connection successful!")
+except Exception as e:
+    print(f"MongoDB connection failed: {e}")
+    raise
+
+# Central user DB (admin or user)
+main_db = client['user']  # or 'admin', as preferred
+users_col = main_db['users']
+
+
+# Helper to get shop DB for a user
+# def get_shop_db(user_id):
+#     return client[f'shop_{user_id}']
+
+SHOP_DB = client['shop_0001']
+
+# Helper to get the next user_id (auto-increment, zero-padded)
+def get_next_user_id():
+    counters_col = main_db['counters']
+    counter = counters_col.find_one_and_update(
+        {'_id': 'user_id'},
+        {'$inc': {'seq': 1}},
+        upsert=True,
+        return_document=True
+    )
+    seq = counter['seq'] if counter and 'seq' in counter else 1
+    return str(seq).zfill(4)
+
+# Helper to get user_id from email
+# def get_user_id_by_email(email):
+#     user = users_col.find_one({'email': email})
+#     return user['user_id'] if user else None
 
 # Home route
 @app.route('/')
@@ -33,35 +73,22 @@ def home():
 # Inventory Routes (MongoDB CRUD)
 # -----------------------------
 
-# Get all inventory items
-@app.route('/api/inventory', methods=['GET'])
-def get_inventory():
-    user_email = request.args.get('user_email')
-    items = list(inventory_col.find({'user_email': user_email}, {'_id': 0}))
-    # Only return the required fields
-    for item in items:
-        for k in list(item.keys()):
-            if k not in ['id', 'name', 'price', 'quantity', 'minStock', 'category', 'user_email']:
-                del item[k]
-    return jsonify({'success': True, 'data': items})
 
 # Add a new inventory item
 @app.route('/api/inventory', methods=['POST'])
 def add_inventory():
     data = request.json
     name = data.get('name', '').strip()
-    user_email = data.get('user_email', '')
+    inventory_col = SHOP_DB['inventory']
     quantity = int(data.get('quantity', 0))
-    # Check for duplicate name for this user
-    existing = inventory_col.find_one({'name': name, 'user_email': user_email})
+    existing = inventory_col.find_one({'name': name})
     if existing:
-        # Update the quantity of the existing item
         new_quantity = int(existing.get('quantity', 0)) + quantity
         inventory_col.update_one({'_id': existing['_id']}, {'$set': {'quantity': new_quantity}})
         updated_item = inventory_col.find_one({'_id': existing['_id']}, {'_id': 0})
         return jsonify({'success': True, 'data': updated_item, 'warning': f"Item '{name}' already exists. Quantity updated instead of adding a new item."})
     else:
-        item_id = str(uuid.uuid4())[:8].upper()
+        item_id = str(uuid.uuid4())
         item = {
             'id': item_id,
             'name': name,
@@ -69,18 +96,43 @@ def add_inventory():
             'quantity': quantity,
             'minStock': int(data.get('minStock', 5)),
             'category': data.get('category', 'General'),
-            'user_email': user_email,
         }
         inventory_col.insert_one(item)
         if '_id' in item:
             del item['_id']
         return jsonify({'success': True, 'data': item})
+# Registration endpoint (add this new route)
+@app.route('/api/auth/register', methods=['POST'])
+def auth_register():
+    data = request.json
+    email = data.get('email')
+    password = data.get('password')
+    shop_name = data.get('shopName')
+    # Generate auto-increment user_id (zero-padded)
+    user_id = get_next_user_id()
+    if users_col.find_one({'email': email}):
+        return jsonify({'success': False, 'message': 'Email already registered'}), 400
+    # In registration endpoint, hash password before storing
+    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+    user_doc = {
+        'user_id': user_id,
+        'email': email,
+        'password': hashed_password,
+        'shopName': shop_name,
+        # add other fields as needed
+    }
+    users_col.insert_one(user_doc)
+    # Create shop DB and collections
+    shop_db = SHOP_DB
+    shop_db['orders'].create_index('id', unique=True)
+    shop_db['inventory'].create_index('id', unique=True)
+    shop_db['customers'].create_index('customerPhone', unique=False)
+    return jsonify({'success': True, 'user_id': user_id})
 
 # Update an inventory item
 @app.route('/api/inventory/<item_id>', methods=['PUT'])
 def update_inventory(item_id):
     data = request.json
-    user_email = data.get('user_email')
     update_fields = {k: v for k, v in data.items() if k in ['name', 'price', 'quantity', 'minStock', 'category']}
     # Coerce types
     if 'price' in update_fields:
@@ -89,19 +141,19 @@ def update_inventory(item_id):
         update_fields['quantity'] = int(update_fields['quantity'])
     if 'minStock' in update_fields:
         update_fields['minStock'] = int(update_fields['minStock'])
-    result = inventory_col.update_one({'id': item_id, 'user_email': user_email}, {'$set': update_fields})
+    inventory_col = SHOP_DB['inventory']
+    result = inventory_col.update_one({'id': item_id}, {'$set': update_fields})
     if result.matched_count:
-        updated = inventory_col.find_one({'id': item_id, 'user_email': user_email}, {'_id': 0})
-        # Only return the required fields
-        filtered = {k: updated[k] for k in ['id', 'name', 'price', 'quantity', 'minStock', 'category', 'user_email'] if k in updated}
+        updated = inventory_col.find_one({'id': item_id}, {'_id': 0})
+        filtered = {k: updated[k] for k in ['id', 'name', 'price', 'quantity', 'minStock', 'category'] if k in updated}
         return jsonify({'success': True, 'data': filtered})
     return jsonify({'success': False, 'message': 'Item not found'}), 404
 
 # Delete an inventory item
 @app.route('/api/inventory/<item_id>', methods=['DELETE'])
 def delete_inventory(item_id):
-    user_email = request.args.get('user_email')
-    result = inventory_col.delete_one({'id': item_id, 'user_email': user_email})
+    inventory_col = SHOP_DB['inventory']
+    result = inventory_col.delete_one({'id': item_id})
     if result.deleted_count:
         return jsonify({'success': True, 'message': 'Item deleted'})
     return jsonify({'success': False, 'message': 'Item not found'}), 404
@@ -109,17 +161,24 @@ def delete_inventory(item_id):
 # Get a specific inventory item
 @app.route('/api/inventory/<item_id>', methods=['GET'])
 def get_inventory_item(item_id):
-    user_email = request.args.get('user_email')
-    item = inventory_col.find_one({'id': item_id, 'user_email': user_email}, {'_id': 0})
+    inventory_col = SHOP_DB['inventory']
+    item = inventory_col.find_one({'id': item_id}, {'_id': 0})
     if item:
-        filtered = {k: item[k] for k in ['id', 'name', 'price', 'quantity', 'minStock', 'category', 'user_email'] if k in item}
+        filtered = {k: item[k] for k in ['id', 'name', 'price', 'quantity', 'minStock', 'category'] if k in item}
         return jsonify({'success': True, 'data': filtered})
     return jsonify({'success': False, 'message': 'Item not found'}), 404
+
+# Add or restore the GET endpoint for inventory:
+@app.route('/api/inventory', methods=['GET'])
+def get_inventory():
+    inventory_col = SHOP_DB['inventory']
+    items = list(inventory_col.find({}, {'_id': 0}))
+    return jsonify({'success': True, 'data': items})
 
 # -----------------------------
 # Order Routes (MongoDB CRUD)
 # -----------------------------
-orders_col = db['orders']
+
 
 # Update order schema to match frontend expectations
 # Fields: id, customerPhone, customerName, items, total, status, timestamp, notes, user_email
@@ -127,8 +186,22 @@ orders_col = db['orders']
 @app.route('/api/orders', methods=['POST'])
 def create_order():
     data = request.json
-    # Generate a unique order id
-    order_id = str(uuid.uuid4())[:8].upper()
+    print(f"Creating order with data: {data}")
+    user_email = data.get('user_email', '')
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    orders_col = SHOP_DB['orders']
+    # Get all order IDs, extract numeric part, and find the max
+    all_orders = list(orders_col.find({}, {'id': 1}))
+    max_id = 0
+    for order in all_orders:
+        oid = str(order.get('id', ''))
+        num_part = ''.join(filter(str.isdigit, oid))
+        if num_part.isdigit():
+            max_id = max(max_id, int(num_part))
+    next_order_id = str(max_id + 1).zfill(4)
+    order_id = next_order_id
     order = {
         'id': order_id,
         'customerPhone': data.get('customerPhone', ''),
@@ -136,23 +209,35 @@ def create_order():
         'items': data.get('items', []),
         'total': data.get('total', 0),
         'status': data.get('status', 'pending'),
-        'timestamp': data.get('timestamp', ''),
+        'timestamp': data.get('timestamp', '') or datetime.utcnow().isoformat() + "Z",
         'notes': data.get('notes', ''),
-        'user_email': data.get('user_email', ''),
+        'user_id': user_id,
     }
+    print(f"Inserting order: {order}")
     orders_col.insert_one(order)
-    return jsonify({'success': True, 'data': order})
+    return jsonify({'success': True, 'data': order, 'message': f"Order placed successfully! Your order ID is {order_id}."})
 
 @app.route('/api/orders', methods=['GET'])
 def get_orders():
-    user_email = request.args.get('user_email')
-    orders = list(orders_col.find({'user_email': user_email}, {'_id': 0}))
-    return jsonify({'success': True, 'data': orders, 'total': len(orders)})
+    print("\n=== Getting Orders ===")
+    try:
+        orders_col = SHOP_DB['orders']
+        orders = list(orders_col.find({}, {'_id': 0}))
+        print(f"Found {len(orders)} orders")
+        print(f"Sample order data: {orders[:1] if orders else 'No orders'}")
+        return jsonify({'success': True, 'data': orders, 'total': len(orders)})
+    except Exception as e:
+        print(f"Error in get_orders: {str(e)}")
+        return jsonify({'success': False, 'message': 'Server error'}), 500
 
 @app.route('/api/orders/<order_id>', methods=['GET'])
 def get_order(order_id):
     user_email = request.args.get('user_email')
-    order = orders_col.find_one({'id': order_id, 'user_email': user_email}, {'_id': 0})
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    orders_col = SHOP_DB['orders']
+    order = orders_col.find_one({'id': order_id, 'user_id': user_id}, {'_id': 0})
     if order:
         return jsonify({'success': True, 'data': order})
     return jsonify({'success': False, 'message': 'Order not found'}), 404
@@ -162,16 +247,24 @@ def update_order(order_id):
     data = request.json
     user_email = data.get('user_email')
     update_fields = {k: v for k, v in data.items() if k in ['customerPhone', 'customerName', 'items', 'total', 'status', 'timestamp', 'notes']}
-    result = orders_col.update_one({'id': order_id, 'user_email': user_email}, {'$set': update_fields})
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    orders_col = SHOP_DB['orders']
+    result = orders_col.update_one({'id': order_id}, {'$set': update_fields})
     if result.matched_count:
-        updated = orders_col.find_one({'id': order_id, 'user_email': user_email}, {'_id': 0})
+        updated = orders_col.find_one({'id': order_id}, {'_id': 0})
         return jsonify({'success': True, 'data': updated})
     return jsonify({'success': False, 'message': 'Order not found'}), 404
 
 @app.route('/api/orders/<order_id>', methods=['DELETE'])
 def delete_order(order_id):
     user_email = request.args.get('user_email')
-    result = orders_col.delete_one({'id': order_id, 'user_email': user_email})
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    orders_col = SHOP_DB['orders']
+    result = orders_col.delete_one({'id': order_id, 'user_id': user_id})
     if result.deleted_count:
         return jsonify({'success': True, 'message': 'Order deleted'})
     return jsonify({'success': False, 'message': 'Order not found'}), 404
@@ -246,24 +339,25 @@ def ai_generate_response():
 # -----------------------------
 @app.route('/api/dashboard/stats', methods=['GET'])
 def dashboard_stats():
-    user_email = request.args.get('user_email')
-    if not user_email:
-        return jsonify({'success': False, 'message': 'user_email is required'}), 400
-    # Orders
-    total_orders = orders_col.count_documents({'user_email': user_email})
-    pending_orders = orders_col.count_documents({'user_email': user_email, 'status': 'pending'})
-    total_revenue = sum(order.get('total', 0) for order in orders_col.find({'user_email': user_email}))
-    # Inventory
-    total_products = inventory_col.count_documents({'user_email': user_email})
-    low_stock_items = inventory_col.count_documents({'user_email': user_email, '$expr': {'$lte': ['$quantity', '$minStock']}})
-    stats = {
-        'totalOrders': total_orders,
-        'pendingOrders': pending_orders,
-        'lowStockItems': low_stock_items,
-        'totalRevenue': total_revenue,
-        'totalProducts': total_products
-    }
-    return jsonify({'success': True, 'data': stats})
+    try:
+        shop_db = SHOP_DB
+        orders_col = shop_db['orders']
+        inventory_col = shop_db['inventory']
+        total_orders = orders_col.count_documents({})
+        pending_orders = orders_col.count_documents({'status': 'pending'})
+        total_revenue = sum(order.get('total', 0) for order in orders_col.find({}))
+        total_products = inventory_col.count_documents({})
+        low_stock_items = inventory_col.count_documents({'$expr': {'$lte': ['$quantity', '$minStock']}})
+        stats = {
+            'totalOrders': total_orders,
+            'pendingOrders': pending_orders,
+            'lowStockItems': low_stock_items,
+            'totalRevenue': total_revenue,
+            'totalProducts': total_products
+        }
+        return jsonify({'success': True, 'data': stats})
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # -----------------------------
 # Reports (mocked)
@@ -342,7 +436,7 @@ def get_profile():
     email = request.args.get('email')
     if not email:
         return jsonify({'success': False, 'message': 'Email is required'}), 400
-    user = db['users'].find_one({'email': email}, {'_id': 0})
+    user = users_col.find_one({'email': email}, {'_id': 0})
     if user:
         return jsonify({'success': True, 'data': user})
     return jsonify({'success': False, 'message': 'User not found'}), 404
@@ -352,9 +446,9 @@ def update_profile():
     data = request.json
     email = data.get('email')
     update_fields = {k: v for k, v in data.items() if k in ['shopName', 'phone', 'address', 'ownerName']}
-    result = db['users'].update_one({'email': email}, {'$set': update_fields})
+    result = users_col.update_one({'email': email}, {'$set': update_fields})
     if result.matched_count:
-        updated = db['users'].find_one({'email': email}, {'_id': 0})
+        updated = users_col.find_one({'email': email}, {'_id': 0})
         return jsonify({'success': True, 'data': updated})
     return jsonify({'success': False, 'message': 'User not found'}), 404
 
@@ -366,10 +460,16 @@ def update_password():
     new_password = data.get('newPassword')
     if not (email and current_password and new_password):
         return jsonify({'success': False, 'message': 'Email, current password, and new password are required'}), 400
-    user = db['users'].find_one({'email': email, 'password': current_password})
+
+    # Hash the current password input
+    hashed_current = hashlib.sha256(current_password.encode()).hexdigest()
+    user = users_col.find_one({'email': email, 'password': hashed_current})
     if not user:
         return jsonify({'success': False, 'message': 'Current password is incorrect'}), 401
-    db['users'].update_one({'email': email}, {'$set': {'password': new_password}})
+
+    # Hash the new password and update
+    hashed_new = hashlib.sha256(new_password.encode()).hexdigest()
+    users_col.update_one({'email': email}, {'$set': {'password': hashed_new}})
     return jsonify({'success': True, 'message': 'Password updated successfully'})
 
 # -----------------------------
@@ -377,19 +477,38 @@ def update_password():
 # -----------------------------
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
+    print("\n=== Login Attempt ===")
     print(f"Raw request data: {request.data}")
     data = request.json
     print(f"Parsed JSON: {data}")
     email = data.get('email')
     password = data.get('password')
     print(f"Login attempt: email={email}, password={password}")
-    user = db['users'].find_one({'email': email, 'password': password}, {'_id': 0})
-    print(f"User found: {user}")
-    if user:
+    
+    try:
+        # In login endpoint, hash incoming password before comparison
+        hashed_password = hashlib.sha256(password.encode()).hexdigest()
+        # First check if user exists
+        user = users_col.find_one({'email': email}, {'_id': 0})
+        print(f"User lookup result: {user}")
+        
+        if not user:
+            print(f"No user found with email: {email}")
+            return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+            
+        # Then check password
+        if user['password'] != hashed_password:
+            print(f"Password mismatch for user: {email}")
+            return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+            
+        print(f"Login successful for user: {email}")
+        # Remove password from user object before returning
+        user.pop('password', None)
         user['token'] = 'mock-jwt-token'
         return jsonify({'success': True, 'user': user, 'token': user['token']})
-    print("Returning invalid credentials error.")
-    return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+    except Exception as e:
+        print(f"Login error: {str(e)}")
+        return jsonify({'success': False, 'message': 'Server error'}), 500
 
 # -----------------------------
 # Customers Endpoints (CRUD and helpers)
@@ -402,7 +521,11 @@ def check_customer():
         return jsonify({'error': 'Missing customerName or customerPhone'}), 400
     name = data.get('customerName', '').strip()
     phone = data.get('customerPhone', '').strip()
-    customer = customers_col.find_one({'customerName': name, 'customerPhone': phone})
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    customers_col = SHOP_DB['customers']
+    customer = customers_col.find_one({'customerName': name, 'customerPhone': phone, 'user_id': user_id})
     if customer:
         # Ensure address_verified field exists
         if 'address_verified' not in customer:
@@ -423,11 +546,15 @@ def add_customer():
     phone = data.get('customerPhone', '').strip()
     address = data.get('address', '').strip()
     user_email = data.get('user_email', '').strip()
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    customers_col = SHOP_DB['customers']
     customer = {
         'customerName': name,
         'customerPhone': phone,
         'address': address,
-        'user_email': user_email,
+        'user_id': user_id,
         'address_verified': True
     }
     customers_col.insert_one(customer)
@@ -439,15 +566,25 @@ def verify_address():
     data = request.json
     name = data.get('customerName', '').strip()
     phone = data.get('customerPhone', '').strip()
-    result = customers_col.update_one({'customerName': name, 'customerPhone': phone}, {'$set': {'address_verified': True}})
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    customers_col = SHOP_DB['customers']
+    result = customers_col.update_one({'customerName': name, 'customerPhone': phone, 'user_id': user_id}, {'$set': {'address_verified': True}})
     if result.matched_count:
         return jsonify({'success': True})
     return jsonify({'success': False, 'message': 'Customer not found'}), 404
 
 @app.route('/api/customers/ensure_address_verified', methods=['POST'])
 def ensure_address_verified():
+    data = request.json
+    user_email = data.get('user_email', '').strip()
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    customers_col = SHOP_DB['customers']
     updated = 0
-    for customer in customers_col.find({"address_verified": {"$exists": False}}):
+    for customer in customers_col.find({"address_verified": {"$exists": False}, 'user_id': user_id}):
         customers_col.update_one({"_id": customer["_id"]}, {"$set": {"address_verified": False}})
         updated += 1
     return jsonify({"updated": updated})
@@ -466,7 +603,11 @@ def chatbot_api():
     messages = data.get('messages', [])
     user_email = data.get('user_email')
     # Fetch inventory for this user
-    items = list(inventory_col.find({'user_email': user_email}, {'_id': 0}))
+    user_id = get_next_user_id() # This will need to be updated to get user_id from email
+    if not user_id:
+        return jsonify({'success': False, 'message': 'User not found'}), 404
+    inventory_col = SHOP_DB['inventory']
+    items = list(inventory_col.find({'user_id': user_id}, {'_id': 0}))
     inventory_map = {item['name'].lower(): item for item in items}
     # Check if user requested any item in the last message
     user_message = messages[-1] if messages else ''

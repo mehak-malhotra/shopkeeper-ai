@@ -18,7 +18,7 @@ import { useToast } from "@/hooks/use-toast"
 import { Search, Phone, Clock, Eye, Filter, ShoppingCart } from "lucide-react"
 
 interface OrderItem {
-  productName: string
+  name: string
   quantity: number
   price: number
 }
@@ -57,7 +57,7 @@ export default function OrdersPage() {
       order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.customerPhone.includes(searchTerm) ||
       (order.customerName && order.customerName.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      order.items.some((item) => item.productName.toLowerCase().includes(searchTerm.toLowerCase()))
+      order.items.some((item) => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
 
     const matchesStatus = statusFilter === "all" || order.status === statusFilter
 
@@ -234,12 +234,12 @@ export default function OrdersPage() {
                         <Phone className="h-4 w-4 text-gray-500" />
                         <span className="text-sm">
                           {order.customerPhone}
-                          {order.customerName && <span className="text-gray-600 ml-2">({order.customerName})</span>}
+                          {order.customerName && <span className="text-black-600 ml-2">({order.customerName})</span>}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <Clock className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm text-gray-600">
+                        <Clock className="h-4 w-4 text-black-500" />
+                        <span className="text-sm text-black-600">
                           {dateTime.date} at {dateTime.time}
                         </span>
                       </div>
@@ -248,7 +248,7 @@ export default function OrdersPage() {
                     <div className="mb-3">
                       <p className="text-sm text-gray-600 mb-1">Items:</p>
                       <p className="text-sm">
-                        {order.items.map((item) => `${item.productName} (${item.quantity})`).join(", ")}
+                        {order.items.map((item) => `${item.name} (${item.quantity})`).join(", ")}
                       </p>
                     </div>
 
@@ -291,36 +291,36 @@ export default function OrdersPage() {
 
       {/* Order Detail Dialog */}
       <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl" style={{ color: '#000' }}>
           <DialogHeader>
-            <DialogTitle>Order Details - {selectedOrder?.id}</DialogTitle>
-            <DialogDescription>Complete information about this order</DialogDescription>
+            <DialogTitle style={{ color: '#000' }}>Order Details - {selectedOrder?.id}</DialogTitle>
+            <DialogDescription style={{ color: '#000' }}>Complete information about this order</DialogDescription>
           </DialogHeader>
 
           {selectedOrder && (
-            <div className="space-y-6">
+            <div className="space-y-6" style={{ color: '#000' }}>
               {/* Customer Info */}
               <div>
-                <h4 className="font-semibold mb-2">Customer Information</h4>
-                <div className="bg-gray-50 p-4 rounded-lg space-y-2">
+                <h4 className="font-semibold mb-2" style={{ color: '#000' }}>Customer Information</h4>
+                <div className="bg-gray-50 p-4 rounded-lg space-y-2" style={{ color: '#000' }}>
                   <div className="flex items-center gap-2">
-                    <Phone className="h-4 w-4 text-gray-500" />
-                    <span>{selectedOrder.customerPhone}</span>
+                    <Phone className="h-4 w-4 text-black" />
+                    <span style={{ color: '#000' }}>{selectedOrder.customerPhone}</span>
                   </div>
                   {selectedOrder.customerName && (
-                    <p>
-                      <strong>Name:</strong> {selectedOrder.customerName}
+                    <p style={{ color: '#000' }}>
+                      <strong style={{ color: '#000' }}>Name:</strong> {selectedOrder.customerName}
                     </p>
                   )}
-                  <p>
-                    <strong>Order Date:</strong> {formatDateTime(selectedOrder.timestamp).date} at{" "}
+                  <p style={{ color: '#000' }}>
+                    <strong style={{ color: '#000' }}>Order Date:</strong> {formatDateTime(selectedOrder.timestamp).date} at{" "}
                     {formatDateTime(selectedOrder.timestamp).time}
                   </p>
                   <div className="flex items-center gap-2">
-                    <span>
-                      <strong>Status:</strong>
+                    <span style={{ color: '#000' }}>
+                      <strong style={{ color: '#000' }}>Status:</strong>
                     </span>
-                    <Badge className={getStatusColor(selectedOrder.status)}>{selectedOrder.status}</Badge>
+                    <Badge className={getStatusColor(selectedOrder.status)} style={{ color: '#000' }}>{selectedOrder.status}</Badge>
                   </div>
                 </div>
               </div>
@@ -341,7 +341,7 @@ export default function OrdersPage() {
                     <tbody>
                       {selectedOrder.items.map((item, index) => (
                         <tr key={index} className="border-t">
-                          <td className="p-3">{item.productName}</td>
+                          <td className="p-3">{item.name}</td>
                           <td className="p-3 text-center">{item.quantity}</td>
                           <td className="p-3 text-right">₹{item.price}</td>
                           <td className="p-3 text-right">₹{item.quantity * item.price}</td>
