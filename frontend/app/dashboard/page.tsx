@@ -15,9 +15,9 @@ interface DashboardStats {
 }
 
 interface RecentOrder {
-  id: string
+  order_id: string
   customerPhone: string
-  items: string[]
+  items: any[]
   total: number
   status: "pending" | "confirmed" | "dispatched" | "delivered"
   timestamp: string
@@ -53,18 +53,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const fetchDashboard = async () => {
-      if (!user?.email) return
+      if (!user?.token) return
       setLoading(true)
       setError(null)
       try {
         // Fetch stats
-        const statsRes = await fetch(`http://localhost:5000/api/dashboard/stats?user_email=${encodeURIComponent(user.email)}`)
+        const statsRes = await fetch(`http://localhost:5000/api/dashboard/stats`, {
+          headers: {
+            'Authorization': `Bearer ${user.token}`
+          }
+        })
         const statsData = await statsRes.json()
         if (statsData.success) setStats(statsData.data)
         else throw new Error(statsData.message || "Failed to fetch stats")
 
         // Fetch recent orders
-        const ordersRes = await fetch(`http://localhost:5000/api/orders?user_email=${encodeURIComponent(user.email)}`)
+        const ordersRes = await fetch(`http://localhost:5000/api/orders`, {
+          headers: {
+            'Authorization': `Bearer ${user.token}`
+          }
+        })
         const ordersData = await ordersRes.json()
         if (ordersData.success) {
           // Sort by timestamp desc, take latest 3
@@ -73,13 +81,17 @@ export default function DashboardPage() {
         } else throw new Error(ordersData.message || "Failed to fetch orders")
 
         // Fetch inventory and filter low stock
-        const invRes = await fetch(`http://localhost:5000/api/inventory?user_email=${encodeURIComponent(user.email)}`)
+        const invRes = await fetch(`http://localhost:5000/api/inventory`, {
+          headers: {
+            'Authorization': `Bearer ${user.token}`
+          }
+        })
         const invData = await invRes.json()
         if (invData.success) {
           const lowStock = invData.data
             .filter((item: any) => item.quantity <= item.minStock)
             .map((item: any) => ({
-              id: item.id,
+              id: item.name,
               name: item.name,
               currentStock: item.quantity,
               minStock: item.minStock
@@ -93,7 +105,7 @@ export default function DashboardPage() {
       }
     }
     fetchDashboard()
-  }, [user?.email])
+  }, [user?.token])
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -126,7 +138,7 @@ export default function DashboardPage() {
       ) : (
         <>
           <div>
-            <h1 className="text-2xl font-bold text-foreground">Good morning, {user?.shopName || "Shopkeeper"}</h1>
+            <h1 className="text-2xl font-bold text-foreground">Good morning, {user?.name || "Shopkeeper"}</h1>
             <p className="text-muted-foreground">Here's what's happening with your store today.</p>
           </div>
 
@@ -193,10 +205,10 @@ export default function DashboardPage() {
               <CardContent>
                 <div className="space-y-4">
                   {recentOrders.map((order) => (
-                    <div key={order.id} className="flex items-center justify-between p-4 rounded-lg border bg-card">
+                    <div key={order.order_id} className="flex items-center justify-between p-4 rounded-lg border bg-card">
                       <div className="flex-1">
                         <div className="flex items-center gap-3 mb-2">
-                          <span className="font-medium">{order.id}</span>
+                          <span className="font-medium">{order.order_id}</span>
                           <Badge variant="outline" className={getStatusColor(order.status)}>
                             {order.status}
                           </Badge>
@@ -232,7 +244,7 @@ export default function DashboardPage() {
                 <div className="space-y-4">
                   {lowStockItems.map((item) => (
                     <div
-                      key={item.id}
+                      key={item.name}
                       className="flex items-center justify-between p-4 rounded-lg border border-red-500 bg-gray-900"
                     >
                       <div className="flex-1">

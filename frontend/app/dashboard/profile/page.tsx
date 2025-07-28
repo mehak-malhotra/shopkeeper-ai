@@ -14,7 +14,7 @@ import { User, Store, Phone, Mail, MapPin, Lock, Save } from "lucide-react"
 interface UserProfile {
   id: string
   email: string
-  shopName: string
+  name: string
   phone: string
   address?: string
   ownerName?: string
@@ -24,7 +24,7 @@ export default function ProfilePage() {
   const [profile, setProfile] = useState<UserProfile>({
     id: "",
     email: "",
-    shopName: "",
+    name: "",
     phone: "",
     address: "",
     ownerName: "",
@@ -43,7 +43,11 @@ export default function ProfilePage() {
     const userData = localStorage.getItem("user")
     if (userData) {
       const user = JSON.parse(userData)
-      fetch(`http://localhost:5000/api/profile?email=${encodeURIComponent(user.email)}`)
+      fetch(`http://localhost:5000/api/profile`, {
+        headers: {
+          'Authorization': `Bearer ${user.token}`
+        }
+      })
         .then(res => res.json())
         .then(data => {
           if (data.success) {
@@ -58,9 +62,14 @@ export default function ProfilePage() {
     setIsLoading(true)
 
     try {
+      const userData = localStorage.getItem("user")
+      const user = JSON.parse(userData || '{}')
       const response = await fetch("http://localhost:5000/api/profile", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${user.token}`
+        },
         body: JSON.stringify(profile),
       })
       const data = await response.json()
@@ -114,12 +123,14 @@ export default function ProfilePage() {
 
     try {
       const userData = localStorage.getItem("user")
-      const email = userData ? JSON.parse(userData).email : ""
+      const user = JSON.parse(userData || '{}')
       const response = await fetch("http://localhost:5000/api/profile/password", {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${user.token}`
+        },
         body: JSON.stringify({
-          email,
           currentPassword: passwordData.currentPassword,
           newPassword: passwordData.newPassword,
         }),
@@ -182,13 +193,13 @@ export default function ProfilePage() {
           <CardContent>
             <form onSubmit={handleProfileUpdate} className="space-y-4">
               <div className="grid gap-2">
-                <Label htmlFor="shopName">Shop Name</Label>
+                <Label htmlFor="name">Name</Label>
                 <div className="relative">
                   <Store className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                   <Input
-                    id="shopName"
-                    value={profile.shopName || ""}
-                    onChange={(e) => handleInputChange("shopName", e.target.value)}
+                    id="name"
+                    value={profile.name || ""}
+                    onChange={(e) => handleInputChange("name", e.target.value)}
                     placeholder="Enter your shop name"
                     className="pl-10"
                     required

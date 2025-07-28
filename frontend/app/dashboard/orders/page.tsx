@@ -24,7 +24,8 @@ interface OrderItem {
 }
 
 interface Order {
-  id: string
+  order_id: string
+  customer_id: string
   customerPhone: string
   customerName?: string
   items: OrderItem[]
@@ -42,19 +43,48 @@ export default function OrdersPage() {
   const [isDetailDialogOpen, setIsDetailDialogOpen] = useState(false)
   const { toast } = useToast()
   const user = JSON.parse(localStorage.getItem("user") || '{}')
+  // Add state for customers
+  const [customers, setCustomers] = useState<any[]>([])
 
   useEffect(() => {
-    async function fetchOrders() {
-      const res = await fetch(`http://localhost:5000/api/orders?user_email=${encodeURIComponent(user.email)}`)
-      const data = await res.json()
-      if (data.success) setOrders(data.data)
+    async function fetchOrdersAndCustomers() {
+      if (!user.token) return
+      // Fetch orders
+      const ordersRes = await fetch(`http://localhost:5000/api/orders`, {
+        headers: {
+          'Authorization': `Bearer ${user.token}`
+        }
+      })
+      const ordersData = await ordersRes.json()
+      if (ordersData.success) {
+        // Convert order_id to string and ensure customer_id exists
+        setOrders(ordersData.data.map((o: any) => ({ 
+          ...o, 
+          order_id: o.order_id?.toString() || o.order_id || '',
+          customer_id: o.customer_id || '' 
+        })))
+      }
+      // Fetch customers
+      const customersRes = await fetch(`http://localhost:5000/api/customers`, {
+        headers: {
+          'Authorization': `Bearer ${user.token}`
+        }
+      })
+      const customersData = await customersRes.json()
+      if (customersData.success) setCustomers(customersData.data)
     }
-    if (user.email) fetchOrders()
-  }, [user.email])
+    fetchOrdersAndCustomers()
+  }, [user.token])
+
+  // Helper to get customer name by customer_id
+  const getCustomerName = (customer_id: string) => {
+    const customer = customers.find((c) => c.customer_id === customer_id)
+    return customer ? customer.name : ''
+  }
 
   const filteredOrders = orders.filter((order) => {
     const matchesSearch =
-      order.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      order.order_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       order.customerPhone.includes(searchTerm) ||
       (order.customerName && order.customerName.toLowerCase().includes(searchTerm.toLowerCase())) ||
       order.items.some((item) => item.name.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -84,12 +114,15 @@ export default function OrdersPage() {
     try {
       const response = await fetch(`http://localhost:5000/api/orders/${orderId}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus, user_email: user.email }),
+        headers: { 
+          "Content-Type": "application/json",
+          'Authorization': `Bearer ${user.token}`
+        },
+        body: JSON.stringify({ status: newStatus }),
       })
       const data = await response.json()
       if (data.success) {
-        setOrders((prev) => prev.map((order) => (order.id === orderId ? { ...order, status: newStatus } : order)))
+        setOrders((prev) => prev.map((order) => (order.order_id === orderId ? { ...order, status: newStatus } : order)))
         toast({
           title: "Order status updated",
           description: `Order ${orderId} status changed to ${newStatus}`,
@@ -136,6 +169,8 @@ export default function OrdersPage() {
   }
 
   const stats = getOrderStats()
+
+
 
   return (
     <div className="space-y-6">
@@ -215,17 +250,18 @@ export default function OrdersPage() {
         </Select>
       </div>
 
-      {/* Orders List */}
+      {/* All Orders List */}
       <div className="space-y-4">
+        <h2 className="text-xl font-semibold">All Orders</h2>
         {filteredOrders.map((order) => {
           const dateTime = formatDateTime(order.timestamp)
           return (
-            <Card key={order.id}>
+            <Card key={order.order_id}>
               <CardContent className="p-6">
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                   <div className="flex-1">
                     <div className="flex items-center gap-3 mb-2">
-                      <h3 className="font-semibold text-lg">{order.id}</h3>
+                      <h3 className="font-semibold text-lg">Order ID: {order.order_id}</h3>
                       <Badge className={getStatusColor(order.status)}>{order.status}</Badge>
                     </div>
 
@@ -234,7 +270,7 @@ export default function OrdersPage() {
                         <Phone className="h-4 w-4 text-gray-500" />
                         <span className="text-sm">
                           {order.customerPhone}
-                          {order.customerName && <span className="text-black-600 ml-2">({order.customerName})</span>}
+                          {getCustomerName(order.customer_id) && <span className="text-black-600 ml-2">({getCustomerName(order.customer_id)})</span>}
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
@@ -269,7 +305,7 @@ export default function OrdersPage() {
 
                     <Select
                       value={order.status}
-                      onValueChange={(value: Order["status"]) => updateOrderStatus(order.id, value)}
+                      onValueChange={(value: Order["status"]) => updateOrderStatus(order.order_id, value)}
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -293,23 +329,31 @@ export default function OrdersPage() {
       <Dialog open={isDetailDialogOpen} onOpenChange={setIsDetailDialogOpen}>
         <DialogContent className="max-w-2xl" style={{ color: '#000' }}>
           <DialogHeader>
-            <DialogTitle style={{ color: '#000' }}>Order Details - {selectedOrder?.id}</DialogTitle>
+            <DialogTitle style={{ color: '#000' }}>Order Details - {selectedOrder?.order_id}</DialogTitle>
             <DialogDescription style={{ color: '#000' }}>Complete information about this order</DialogDescription>
           </DialogHeader>
 
           {selectedOrder && (
             <div className="space-y-6" style={{ color: '#000' }}>
-              {/* Customer Info */}
+              {/* Order and Customer Info */}
               <div>
-                <h4 className="font-semibold mb-2" style={{ color: '#000' }}>Customer Information</h4>
+                <h4 className="font-semibold mb-2" style={{ color: '#000' }}>Order & Customer Information</h4>
                 <div className="bg-gray-50 p-4 rounded-lg space-y-2" style={{ color: '#000' }}>
+                  <div className="flex items-center gap-2">
+                    <strong style={{ color: '#000' }}>Order ID:</strong>
+                    <span style={{ color: '#000' }}>{selectedOrder.order_id}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <strong style={{ color: '#000' }}>Customer ID:</strong>
+                    <span style={{ color: '#000' }}>{selectedOrder.customer_id || 'N/A'}</span>
+                  </div>
                   <div className="flex items-center gap-2">
                     <Phone className="h-4 w-4 text-black" />
                     <span style={{ color: '#000' }}>{selectedOrder.customerPhone}</span>
                   </div>
-                  {selectedOrder.customerName && (
+                  {getCustomerName(selectedOrder.customer_id) && (
                     <p style={{ color: '#000' }}>
-                      <strong style={{ color: '#000' }}>Name:</strong> {selectedOrder.customerName}
+                      <strong style={{ color: '#000' }}>Customer Name:</strong> {getCustomerName(selectedOrder.customer_id)}
                     </p>
                   )}
                   <p style={{ color: '#000' }}>

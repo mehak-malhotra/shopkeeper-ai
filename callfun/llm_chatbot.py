@@ -6,220 +6,1012 @@ import google.generativeai as genai
 import random
 from datetime import datetime
 import re
-from dotenv import load_dotenv
 import os
 
-load_dotenv()
-MONGO_URI = os.getenv("MONGO_URI")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
 # LLM setup (Gemini)
+GEMINI_API_KEY = "AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk"
 GEMINI_MODEL = "gemini-2.0-flash"
-genai.configure(api_key='AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk')
+genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel(GEMINI_MODEL)
 
-# MongoDB setup (use shop_0001, same as backend)
-client = MongoClient(MONGO_URI, tls=True, tlsCAFile=certifi.where())
-db = client['shop_0001']
+# MongoDB setup
+client = MongoClient(
+    "mongodb+srv://dhallhimanshu1234:9914600112%40DHALLh@himanshudhall.huinsh2.mongodb.net/",
+    tls=True,
+    tlsCAFile=certifi.where()
+)
+db = client['shop_db']
 collection = db["inventory"]
 customers_collection = db["customers"]
 orders_collection = db["orders"]
 
-# Helper to get current inventory as a list of dicts
+fixed_inventory_email = "dhallhimanshu1234@gmail.com"
+
+# Conversation state management
+class ConversationState:
+    def __init__(self):
+        self.stage = "greeting"
+        self.customer_info = {}
+        self.order_items = []
+        self.total_price = 0
+        self.notes = ""
+        self.confirmations = {
+            "phone_confirmed": False,
+            "address_confirmed": False,
+            "order_complete": False,
+            "delivery_confirmed": False
+        }
+        self.messages = []
+        self.inventory = []
+        self.user_email = None
+
+    def to_json(self):
+        return {
+            "stage": self.stage,
+            "customer_info": self.customer_info,
+            "order_items": self.order_items,
+            "total_price": self.total_price,
+            "notes": self.notes,
+            "confirmations": self.confirmations,
+            "messages": self.messages[-5:],  # Keep last 5 messages
+            "inventory_count": len(self.inventory)
+        }
+
+    def from_json(self, data):
+        self.stage = data.get("stage", "greeting")
+        self.customer_info = data.get("customer_info", {})
+        self.order_items = data.get("order_items", [])
+        self.total_price = data.get("total_price", 0)
+        self.notes = data.get("notes", "")
+        self.confirmations = data.get("confirmations", {})
+        self.messages = data.get("messages", [])
+
+# Helper functions
 def get_inventory():
-    docs = list(collection.find({}))
-    return [{"name": doc["name"], "quantity": doc["quantity"], "price": doc["price"]} for doc in docs]
-
-# Helper to call Gemini LLM for a conversational response
-# The LLM is responsible for all intent detection, fuzzy matching, and natural conversation
-
-def llm_respond(messages, inventory, customer=None, ask_for_notes=False):
-    prompt = (
-    "You are a friendly, helpful shop assistant AI. "
-    "Keep your conversation concise and use simple vocabulary. Avoid overly complex or verbose responses. "
-    "First, collect all required customer details and order items. "
-    
-    # --- Start of New Instructions ---
-    "After the user adds an item, only confirm the addition (e.g., 'Added 3 Bananas to your cart.'). Do not repeat the entire order unless the user asks for it (e.g., 'what is my order', 'show my cart', 'order summary'). "
-    "When the user says they are done ordering, only tell them the number of items in their cart and the total price (e.g., 'You have 5 items in your cart. The total is ₹1200.'). Do not list all items unless the user asks for a summary. "
-    # --- End of New Instructions ---
-    
-    "After summarizing the order, always ask the user to confirm the total price before finalizing. "
-    "At the end, before placing the order, always ask for any special instructions or delivery notes, and include them as 'notes' in the order JSON. "
-    "Only output the final JSON block (with all customer and order details) after the user has confirmed the price and provided notes (or explicitly said there are none). "
-    "After the order is placed and all tasks are done, always end the conversation with a friendly goodbye message. "
-    "If the user provides any special instructions or delivery notes, include them as 'notes' in the order JSON. "
-    "If any item in the order is out of stock, inform the user and ask them to adjust their order. "
-    + (f"Here is the current customer info: {json.dumps(customer)}. " if customer else "")
-    + ("Please ask for special instructions or notes now." if ask_for_notes else "")
-    + "Here is the current inventory: " + json.dumps(inventory) + ". "
-    + "Conversation so far: " + json.dumps(messages) + ". "
-    "Respond as a real person would, in a friendly and natural way."
-)
-    response = model.generate_content(prompt)
-    return response.text
-
-# Helper to extract JSON block from LLM response
-def extract_json(text):
+    """Get current inventory from backend"""
     try:
-        start = text.index('{')
-        end = text.rindex('}') + 1
-        json_str = text[start:end]
-        return json.loads(json_str)
-    except Exception:
+        token = get_user_token(fixed_inventory_email)
+        if not token:
+            print("❌ No authentication token available")
+            return []
+        
+        response = requests.get("http://localhost:5000/api/inventory", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('data', [])
+        else:
+            print(f"❌ Inventory fetch failed: {response.status_code} - {response.text}")
+        return []
+    except Exception as e:
+        print(f"❌ Inventory fetch error: {e}")
+        return []
+
+def get_user_token(email):
+    """Get authentication token"""
+    try:
+        # Try with the default password that was set during registration
+        response = requests.post("http://localhost:5000/api/auth/login", 
+                               json={"email": email, "password": "1234567890"})
+        if response.status_code == 200:
+            return response.json().get('token')
+        
+        # If that fails, try with "password"
+        response = requests.post("http://localhost:5000/api/auth/login", 
+                               json={"email": email, "password": "password"})
+        if response.status_code == 200:
+            return response.json().get('token')
+        
+        print(f"❌ Authentication failed for {email}")
+        return None
+    except Exception as e:
+        print(f"❌ Authentication error: {e}")
         return None
 
-# Main chat loop
-print("Hi! I'm your AI shop assistant. Let's get started with your order.")
-messages = []
-inventory = get_inventory()
-order_placed = False
-customer = None
-name = None
-phone = None
-address = None
-user_email = None
-ask_for_notes = False
-collected_notes = None
-
-# Step 1: Ask for name and phone number
-while not (name and phone):
-    if not name:
-        name = input("Bot: May I have your name?\nYou: ").strip()
-        messages.append({"role": "user", "content": name})
-    if not phone:
-        phone = input("Bot: And your phone number?\nYou: ").strip()
-        messages.append({"role": "user", "content": phone})
-
-# Step 2: Check database for customer
-customer_db = customers_collection.find_one({"customerPhone": phone})
-if customer_db:
-    customer = {
-        "name": customer_db.get("customerName", ""),
-        "phone": customer_db.get("customerPhone", ""),
-        "address": customer_db.get("address", ""),
-        "user_email": customer_db.get("user_email", "")
-    }
-    print(f"Bot: Welcome back, {customer['name']}! I have your address as: {customer['address']}. Let's proceed with your order.")
-    messages.append({"role": "assistant", "content": f"Welcome back, {customer['name']}! I have your address as: {customer['address']}."})
-else:
-    # Step 3: Ask for address and email
-    address = input("Bot: I couldn't find you in our records. May I have your address?\nYou: ").strip()
-    user_email = input("Bot: And your email address?\nYou: ").strip()
-    customer = {
-        "name": name,
-        "phone": phone,
-        "address": address,
-        "user_email": user_email
-    }
-    messages.append({"role": "user", "content": address})
-    messages.append({"role": "user", "content": user_email})
-
-# Fully dynamic, LLM-driven conversation loop (no static input for name/phone/address/email)
-while True:
-    # 1. Pass conversation, known customer info (if any), and inventory to LLM
-    response = llm_respond(messages, inventory, customer)
-    print(f"Bot: {response}")
-    messages.append({"role": "assistant", "content": response})
-
-    # 2. Try to extract JSON with all required info
-    data = extract_json(response)
-    order_detected = False
-
-    # Check for all possible key sets
-    if data:
-        # 1. Standard keys
-        if 'customer' in data and 'order' in data:
-            customer = data['customer']
-            order = data['order']
-            order_detected = True
-        # 2. Alternative keys
-        elif 'customer_details' in data and 'order_details' in data:
-            customer = data['customer_details']
-            order = data['order_details']
-            order_detected = True
-        # 3. Flat keys (as in your latest LLM output)
-        elif 'customer_name' in data and 'order_items' in data:
-            customer = {
-                "name": data.get("customer_name", ""),
-                "phone": data.get("phone", ""),
-                "address": data.get("address", ""),
-                "user_email": data.get("user_email", "")
-            }
-            order = {
-                "items": data.get("order_items", []),
-                "total": data.get("total", data.get("total_price", 0)),
-                "notes": data.get("notes", "")
-            }
-            order_detected = True
-
-    if order_detected:
-        # 3. Check inventory and update DB as before
-        can_fulfill = True
-        for it in order.get('items', []):
-            db_item = collection.find_one({
-                "name": {"$regex": f"^{re.escape(it['name'])}$", "$options": "i"}
-            })
-            if not db_item or db_item["quantity"] < it["quantity"]:
-                print(f"Bot: Sorry, we only have {db_item['quantity'] if db_item else 0} {it['name']} left. Please adjust your order.")
-                can_fulfill = False
-        if not can_fulfill:
-            continue
-        for it in order.get('items', []):
-            result = collection.update_one(
-                {
-                    "name": {"$regex": f"^{re.escape(it['name'])}$", "$options": "i"},
-                    "quantity": {"$gte": it["quantity"]}
-                },
-                {"$inc": {"quantity": -it["quantity"]}}
-            )
-            if result.modified_count == 0:
-                print(f"Bot: Sorry, {it['name']} just went out of stock or name mismatch. Please adjust your order.")
-                can_fulfill = False
-                break
-        if not can_fulfill:
-            continue
-        customers_collection.update_one(
-            {"customerPhone": customer.get("phone", "")},
-            {"$set": {
-                "customerPhone": customer.get("phone", ""),
-                "customerName": customer.get("name", ""),
-                "address": customer.get("address", ""),
-                "user_email": customer.get("user_email", "")
-            }},
-            upsert=True
-        )
-        # When an order is ready to be placed, send it to the backend for creation
-        import requests
-
-        BACKEND_URL = "http://localhost:5000/api/orders"
-
-        order_payload = {
-            'customerPhone': customer.get('phone', ''),
-            'customerName': customer.get('name', ''),
-            'items': order.get('items', []),
-            'total': order.get('total', 0),
-            'status': order.get('status', 'pending'),
-            'timestamp': datetime.utcnow().isoformat() + "Z",
-            'notes': order.get('notes', ''),
-        }
-        response = requests.post(BACKEND_URL, json=order_payload)
-        if response.ok:
-            backend_order = response.json().get('data', {})
-            order_id = backend_order.get('id', '')
-            print(f"Bot: Order placed successfully! Your order ID is {order_id}.")
-            break  # Exit the loop after successful order placement
+def extract_data_from_backend():
+    """Extract all data from backend and update shop_data.json"""
+    try:
+        token = get_user_token(fixed_inventory_email)
+        if not token:
+            print("❌ No authentication token available")
+            return False
+        
+        response = requests.get("http://localhost:5000/api/chatbot/data", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('success'):
+                shop_data = data.get('data', {})
+                
+                # Save to shop_data.json
+                with open('shop_data.json', 'w') as f:
+                    json.dump(shop_data, f, indent=2)
+                
+                print(f"✅ {data.get('message', 'Data extracted successfully')}")
+                return True
+            else:
+                print(f"❌ Backend error: {data.get('message', 'Unknown error')}")
+                return False
         else:
-            print("Bot: Failed to place order. Please try again later.")
-            retry_input = input("Bot: Would you like to try again? (yes/no): ").strip().lower()
-            if retry_input in ["no", "n", "exit", "quit"]:
-                print("Bot: It was great talking to you! Have a wonderful day!")
-                break
-        continue
+            print(f"❌ Data extraction failed: {response.status_code} - {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌ Data extraction error: {e}")
+        return False
 
-    # 3. Get next user input (text or voice)
-    user_input = input("You: ")
-    messages.append({"role": "user", "content": user_input})
-    if any(word in user_input.lower() for word in ["bye", "thank you", "thanks", "exit", "quit"]):
-        print("Bot: It was great talking to you! Have a wonderful day!")
-        break
+def find_customer_by_phone(phone):
+    """Find customer by phone number"""
+    try:
+        response = requests.post("http://localhost:5000/api/customers/find-by-phone",
+                               headers={"Authorization": f"Bearer {get_user_token(fixed_inventory_email)}"},
+                               json={"phone": phone})
+        if response.status_code == 200:
+            return response.json().get('data')
+        return None
+    except:
+        return None
+
+def add_customer(customer_data):
+    """Add new customer"""
+    try:
+        response = requests.post("http://localhost:5000/api/customers/add",
+                               headers={"Authorization": f"Bearer {get_user_token(fixed_inventory_email)}"},
+                               json=customer_data)
+        if response.status_code == 200:
+            return response.json().get('data')
+        return None
+    except:
+        return None
+
+def create_order(order_data):
+    """Create new order"""
+    try:
+        response = requests.post("http://localhost:5000/api/orders",
+                               headers={"Authorization": f"Bearer {get_user_token(fixed_inventory_email)}"},
+                               json=order_data)
+        if response.status_code == 200:
+            return response.json().get('data')
+        return None
+    except:
+        return None
+
+def update_inventory_quantities(updates):
+    """Update inventory quantities"""
+    try:
+        response = requests.post("http://localhost:5000/api/inventory/update-quantities",
+                               headers={"Authorization": f"Bearer {get_user_token(fixed_inventory_email)}"},
+                               json={"updates": updates})
+        return response.status_code == 200
+    except:
+        return False
+
+def llm_process_conversation(state, user_input):
+    """Process conversation with LLM and return structured response - Only for ordering"""
+    
+    # Load current shop data from JSON file
+    try:
+        with open('shop_data.json', 'r') as f:
+            shop_data = json.load(f)
+    except FileNotFoundError:
+        shop_data = {
+            "customers": [],
+            "orders": [],
+            "inventory": [],
+            "current_customer": None,
+            "current_order": None,
+            "conversation_state": {
+                "stage": "greeting",
+                "customer_info": {},
+                "order_items": [],
+                "total_price": 0,
+                "notes": "",
+                "confirmations": {
+                    "phone_confirmed": False,
+                    "address_confirmed": False,
+                    "order_complete": False,
+                    "delivery_confirmed": False
+                }
+            }
+        }
+    
+    # Create context for LLM
+    context = {
+        "current_stage": state.stage,
+        "customer_info": state.customer_info,
+        "order_items": state.order_items,
+        "total_price": state.total_price,
+        "confirmations": state.confirmations,
+        "inventory": [{"name": item["name"], "price": item["price"], "quantity": item["quantity"]} for item in state.inventory],
+        "conversation_history": state.messages[-5:],
+        "user_input": user_input,
+        "shop_data": shop_data
+    }
+    
+    prompt = f"""
+You are a professional store assistant for INDIA MART GROCERY. You are helping a customer with their FRESH NEW ORDER.
+
+CURRENT SHOP DATA:
+{json.dumps(shop_data, indent=2)}
+
+CONVERSATION CONTEXT:
+{json.dumps(context, indent=2)}
+
+AVAILABLE INVENTORY:
+{chr(10).join([f"- {item['name']}: ₹{item['price']} (Stock: {item['quantity']})" for item in state.inventory])}
+
+IMPORTANT: This is a COMPLETELY FRESH NEW ORDER. There are no previous items or orders connected to this conversation.
+
+ORDERING RULES:
+1. Be natural, friendly, and helpful
+2. Help customers order items from inventory
+3. Check stock availability before adding items
+4. Calculate prices correctly
+5. Handle order completion gracefully
+6. Be conversational, not robotic
+7. If customer mentions an item, ask for quantity
+8. If customer provides a number after an item, add that quantity to order
+9. If customer says "done", "finish", "complete", "no more" - complete the order
+10. Don't add items to order unless customer explicitly requests them
+11. Update shop_data.json with any order changes
+12. This is a FRESH ORDER - start with empty cart
+13. Don't reference any previous orders or items
+
+ORDERING FLOW:
+- Start with empty cart (fresh order)
+- Help customer select items from inventory
+- Ask for quantities when items are mentioned
+- Confirm orders and calculate totals
+- Handle order completion
+
+RESPOND WITH JSON ONLY:
+{{
+    "response": "Your natural, conversational response to the customer",
+    "actions": {{
+        "add_item": {{"name": "item_name", "quantity": 0}},
+        "complete_order": true/false,
+        "reset_order": true/false
+    }},
+    "order_update": {{"field": "value"}},
+    "shop_data_updates": {{
+        "current_order": null,
+        "conversation_state": {{}}
+    }},
+    "system_message": "Optional system message for debugging"
+}}
+
+EXAMPLES:
+- Customer says "apples" → Ask for quantity
+- Customer says "5" → Add 5 apples to order and ask for more items
+- Customer says "done" → Complete order and show summary
+- Customer says "I want 3 bananas" → Add 3 bananas to order
+"""
+    
+    try:
+        response = model.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        # Extract JSON from response
+        if '{' in response_text and '}' in response_text:
+            start = response_text.find('{')
+            end = response_text.rfind('}') + 1
+            json_str = response_text[start:end]
+            llm_response = json.loads(json_str)
+            
+            # Update shop_data.json with any changes from LLM
+            if llm_response.get("shop_data_updates"):
+                updates = llm_response["shop_data_updates"]
+                
+                # Update current order
+                if updates.get("current_order") is not None:
+                    shop_data["current_order"] = updates["current_order"]
+                
+                # Update conversation state
+                if updates.get("conversation_state"):
+                    shop_data.setdefault("conversation_state", {}).update(updates["conversation_state"])
+                
+                # Save updated shop_data.json
+                with open('shop_data.json', 'w') as f:
+                    json.dump(shop_data, f, indent=2)
+            
+            return llm_response
+        else:
+            # Fallback response
+            return {
+                "response": "I understand. How can I help you with your order?",
+                "actions": {},
+                "order_update": {},
+                "shop_data_updates": {}
+            }
+    except Exception as e:
+        print(f"LLM Error: {e}")
+        return {
+            "response": "I'm having trouble understanding. Could you please repeat that?",
+            "actions": {},
+            "order_update": {},
+            "shop_data_updates": {}
+        }
+
+def save_conversation_state(state, filename="conversation_state.json"):
+    """Save conversation state to JSON file"""
+    try:
+        with open(filename, 'w') as f:
+            json.dump(state.to_json(), f, indent=2)
+    except Exception as e:
+        print(f"Error saving state: {e}")
+
+def load_conversation_state(filename="conversation_state.json"):
+    """Load conversation state from JSON file"""
+    try:
+        with open(filename, 'r') as f:
+            data = json.load(f)
+            state = ConversationState()
+            state.from_json(data)
+            return state
+    except:
+        return ConversationState()
+
+def reset_order(state):
+    """Reset order if there are stock issues"""
+    state.order_items = []
+    state.total_price = 0
+    print("🔄 Order reset due to stock issues. Please start fresh.")
+
+def add_item_to_order(state, item_name, quantity):
+    """Add item to order with inventory check"""
+    for item in state.inventory:
+        if item["name"].lower() == item_name.lower():
+            if item["quantity"] >= quantity:
+                state.order_items.append({
+                    "name": item["name"],
+                    "quantity": quantity,
+                    "price": item["price"]
+                })
+                state.total_price += quantity * item["price"]
+                print(f"✅ Added {quantity} {item['name']} to your order")
+                return True
+            else:
+                print(f"❌ Sorry, we only have {item['quantity']} {item['name']} in stock.")
+                return False
+    print(f"❌ Sorry, {item_name} is not available in our inventory.")
+    return False
+
+def process_order_completion(state):
+    """Process order completion"""
+    if not state.order_items:
+        print("Bot: You haven't added any items yet. What would you like to order?")
+        return False
+    
+    # Show order summary
+    print("\n📋 ORDER SUMMARY:")
+    for item in state.order_items:
+        print(f"  - {item['quantity']} {item['name']} = ₹{item['quantity'] * item['price']}")
+    print(f"💰 Total: ₹{state.total_price}")
+    
+    # Get delivery notes
+    print("\nBot: Any special delivery instructions?")
+    state.notes = input("You: ").strip()
+    
+    # Check inventory and update
+    inventory_updates = []
+    can_fulfill = True
+    
+    for item in state.order_items:
+        for inv_item in state.inventory:
+            if inv_item["name"].lower() == item["name"].lower():
+                if inv_item["quantity"] < item["quantity"]:
+                    print(f"❌ Sorry, {item['name']} is out of stock!")
+                    can_fulfill = False
+                    break
+                else:
+                    inventory_updates.append({
+                        "name": item["name"],
+                        "quantity": -item["quantity"]
+                    })
+                break
+    
+    if can_fulfill and update_inventory_quantities(inventory_updates):
+        # Create order
+        order_data = {
+            "customerPhone": state.customer_info.get("phone", ""),
+            "items": state.order_items,
+            "total": state.total_price,
+            "status": "pending",
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "notes": state.notes
+        }
+        
+        created_order = create_order(order_data)
+        if created_order:
+            order_id = created_order.get("order_id", "Unknown")
+            customer_id = created_order.get("customer_id", "Unknown")
+            print(f"✅ Order placed successfully!")
+            print(f"📋 Order ID: {order_id}")
+            print(f"👤 Customer ID: {customer_id}")
+            print(f"💰 Total Amount: ₹{state.total_price}")
+            print("🎉 Thank you for your order! Have a great day!")
+            return True
+        else:
+            print("❌ Sorry, there was an error creating the order.")
+            return False
+    else:
+        print("❌ Sorry, some items are out of stock. Please modify your order.")
+        return False
+
+def get_order_status(order_id):
+    """Get order status from shop_data.json"""
+    try:
+        with open('shop_data.json', 'r') as f:
+            shop_data = json.load(f)
+        
+        all_orders = shop_data.get('orders', [])
+        # Find order by ID
+        for order in all_orders:
+            if str(order.get('order_id')) == str(order_id):
+                return order
+        
+        return None
+    except Exception as e:
+        print(f"❌ Error reading orders from shop_data.json: {e}")
+        return None
+
+def get_all_orders():
+    """Get all orders from backend"""
+    try:
+        token = get_user_token(fixed_inventory_email)
+        if not token:
+            print("❌ No authentication token available")
+            return []
+        
+        response = requests.get("http://localhost:5000/api/orders", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('data', [])
+        else:
+            print(f"❌ Orders fetch failed: {response.status_code} - {response.text}")
+        return []
+    except Exception as e:
+        print(f"❌ Orders fetch error: {e}")
+        return []
+
+def get_customer_orders(customer_phone):
+    """Get all orders for a specific customer from shop_data.json using customer_id"""
+    try:
+        with open('shop_data.json', 'r') as f:
+            shop_data = json.load(f)
+        
+        all_orders = shop_data.get('orders', [])
+        all_customers = shop_data.get('customers', [])
+        
+        # Find the customer_id for this phone number
+        customer_id = None
+        for customer in all_customers:
+            if customer.get('phone') == customer_phone:
+                customer_id = customer.get('customer_id')
+                break
+        
+        if customer_id is None:
+            print(f"Bot: Could not find customer_id for phone number: {customer_phone}")
+            return []
+        
+        # Filter orders for this customer by customer_id
+        customer_orders = [order for order in all_orders if order.get('customer_id') == customer_id]
+        return customer_orders
+    except Exception as e:
+        print(f"❌ Error reading orders from shop_data.json: {e}")
+        return []
+
+def display_order_summary(order):
+    """Display a formatted order summary"""
+    print(f"\n📋 Order ID: {order.get('order_id', 'N/A')}")
+    print(f"📞 Customer Phone: {order.get('customerPhone', 'N/A')}")
+    print(f"💰 Total Amount: ₹{order.get('total', 'N/A')}")
+    print(f"📦 Status: {order.get('status', 'N/A')}")
+    print(f"📝 Notes: {order.get('notes', 'N/A')}")
+    print(f"🕒 Timestamp: {order.get('timestamp', 'N/A')}")
+    
+    items = order.get('items', [])
+    if items:
+        print("🛒 Items:")
+        for item in items:
+            print(f"  - {item.get('quantity', 0)} x {item.get('name', 'Unknown')} = ₹{item.get('quantity', 0) * item.get('price', 0)}")
+    print("-" * 40)
+
+def process_user_input(user_input):
+    """Process user input with LLM to handle exit responses"""
+    
+    prompt = f"""
+You are a grocery store assistant. The customer said: "{user_input}"
+
+Determine if the customer wants to:
+1. Exit/quit the conversation
+2. Continue with current functionality
+3. Say no/decline current offer
+
+RESPOND WITH JSON ONLY:
+{{
+    "action": "exit|continue|decline",
+    "reason": "brief explanation of the action",
+    "response": "appropriate bot response"
+}}
+
+EXAMPLES:
+- "no" → exit
+- "thanks" → exit  
+- "none" → exit
+- "neither" → exit
+- "bye" → exit
+- "quit" → exit
+- "exit" → exit
+- "goodbye" → exit
+- "yes" → continue
+- "okay" → continue
+- "sure" → continue
+"""
+    
+    try:
+        response = model.generate_content(prompt)
+        response_text = response.text.strip()
+        
+        # Extract JSON from response
+        if '{' in response_text and '}' in response_text:
+            start = response_text.find('{')
+            end = response_text.rfind('}') + 1
+            json_str = response_text[start:end]
+            return json.loads(json_str)
+        else:
+            # Default to continue if LLM fails
+            return {
+                "action": "continue",
+                "reason": "LLM response parsing failed",
+                "response": "I understand. How can I help you?"
+            }
+    except Exception as e:
+        print(f"LLM Input Processing Error: {e}")
+        return {
+            "action": "continue",
+            "reason": "Error processing input",
+            "response": "I understand. How can I help you?"
+        }
+
+def ask_for_more_help():
+    """Ask if user wants anything else and handle response"""
+    print("Bot: Is there anything else I can help you with today?")
+    user_response = input("You: ").strip()
+    
+    # Process with LLM
+    llm_result = process_user_input(user_response)
+    
+    if llm_result.get("action") == "exit":
+        print(f"Bot: {llm_result.get('response', 'Thank you for calling INDIA MART GROCERY! Have a great day!')}")
+        return False  # Exit the bot
+    else:
+        return True  # Continue with menu
+
+def delete_order_from_backend(order_id):
+    """Delete order from backend"""
+    try:
+        token = get_user_token(fixed_inventory_email)
+        if not token:
+            print("❌ No authentication token available")
+            return False
+        
+        response = requests.delete(f"http://localhost:5000/api/orders/{order_id}", 
+                                headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            return data.get('success', False)
+        else:
+            print(f"❌ Order deletion failed: {response.status_code} - {response.text}")
+        return False
+    except Exception as e:
+        print(f"❌ Order deletion error: {e}")
+        return False
+
+def delete_order_from_shop_data(order_id):
+    """Delete order from shop_data.json"""
+    try:
+        with open('shop_data.json', 'r') as f:
+            shop_data = json.load(f)
+        
+        orders = shop_data.get('orders', [])
+        # Find and remove the order
+        for i, order in enumerate(orders):
+            if str(order.get('order_id')) == str(order_id):
+                deleted_order = orders.pop(i)
+                # Save updated shop_data.json
+                with open('shop_data.json', 'w') as f:
+                    json.dump(shop_data, f, indent=2)
+                return deleted_order
+        
+        return None
+    except Exception as e:
+        print(f"❌ Error deleting order from shop_data.json: {e}")
+        return None
+
+# Main conversation flow - Fully LLM-driven
+def main():
+    print("🤖 INDIA MART GROCERY - AI Assistant")
+    print("=" * 50)
+    
+    # Initialize state
+    state = load_conversation_state()
+    state.user_email = fixed_inventory_email
+    
+    # Extract data from backend
+    print("📦 Extracting data from backend...")
+    if extract_data_from_backend():
+        # Load the extracted data
+        try:
+            with open('shop_data.json', 'r') as f:
+                shop_data = json.load(f)
+            state.inventory = shop_data.get('inventory', [])
+            print(f"✅ Loaded {len(state.inventory)} inventory items")
+        except Exception as e:
+            print(f"❌ Error loading extracted data: {e}")
+            state.inventory = []
+    else:
+        print("⚠️  Using fallback inventory data")
+        state.inventory = get_inventory()
+    
+    if state.inventory:
+        print(f"✅ Found {len(state.inventory)} items in inventory")
+    else:
+        print("⚠️  No inventory items found")
+    
+    print("\n🎯 Starting conversation...")
+    print("Bot: Welcome to INDIA MART GROCERY! How can I help you today?")
+    print("Bot: Can I get your phone number to look up your details?")
+    state.stage = "phone_collection"
+    
+    while True:
+        try:
+            user_input = input("You: ").strip()
+            
+            # Check for exit
+            if any(word in user_input.lower() for word in ["bye", "exit", "quit", "goodbye"]):
+                print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
+                break
+            
+            # Process user input with LLM first
+            llm_input_result = process_user_input(user_input)
+            if llm_input_result.get("action") == "exit":
+                print(f"Bot: {llm_input_result.get('response', 'Thank you for calling INDIA MART GROCERY! Have a great day!')}")
+                break
+            
+            # Add user input to messages
+            state.messages.append({"role": "user", "content": user_input})
+            
+            # Handle customer logic (hardcoded)
+            if state.stage == "phone_collection":
+                phone = user_input.strip()
+                if phone:
+                    state.customer_info["phone"] = phone
+                    
+                    # Check if customer exists
+                    existing_customer = find_customer_by_phone(phone)
+                    if existing_customer:
+                        print("Bot: Welcome back! I found your details in our system.")
+                        print(f"Bot: Your address is {existing_customer.get('address', 'not found')}. Is this correct?")
+                        state.customer_info.update(existing_customer)
+                        state.stage = "address_confirmation"
+                    else:
+                        print("Bot: Thanks! I don't have your details yet. What's your name?")
+                        state.stage = "name_collection"
+                else:
+                    print("Bot: Please provide a valid phone number.")
+                continue
+            
+            elif state.stage == "name_collection":
+                state.customer_info["name"] = user_input
+                state.stage = "address_collection"
+                print("Bot: And what's your delivery address?")
+                continue
+            
+            elif state.stage == "address_collection":
+                state.customer_info["address"] = user_input
+                # Add new customer to database
+                new_customer = add_customer(state.customer_info)
+                if new_customer:
+                    state.customer_info = new_customer
+                state.confirmations["address_confirmed"] = True
+                state.stage = "menu_selection"
+                print("Bot: Perfect! What would you like to do today?")
+                print("1. Create new order")
+                print("2. Check status of old order")
+                print("3. Delete order")
+                print("Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "address_confirmation":
+                if user_input.lower() in ["yes", "y", "correct", "right"]:
+                    state.confirmations["address_confirmed"] = True
+                    state.stage = "menu_selection"
+                    print("Bot: Great! What would you like to do today?")
+                    print("1. Create new order")
+                    print("2. Check status of old order")
+                    print("3. Delete order")
+                    print("Please choose 1, 2, or 3:")
+                elif user_input.lower() in ["no", "n", "incorrect", "wrong"]:
+                    print("Bot: Please provide your correct address:")
+                    state.stage = "address_collection"
+                else:
+                    print("Bot: Please respond with 'yes' or 'no' to confirm your address.")
+                continue
+            
+            elif state.stage == "menu_selection":
+                if user_input.strip() == "1":
+                    # Create new order - fresh start
+                    reset_order(state)
+                    state.stage = "ordering"
+                    print("Bot: Perfect! Let's create a fresh new order. What would you like to order?")
+                elif user_input.strip() == "2":
+                    # Check status of old order
+                    state.stage = "check_order_status"
+                    print("Bot: I'll check your order status. Please provide your order ID:")
+                elif user_input.strip() == "3":
+                    # Delete order
+                    state.stage = "delete_order"
+                    print("Bot: I'll help you delete an order. Please provide your order ID:")
+                else:
+                    print("Bot: Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "check_order_status":
+                # First, show customer's orders
+                customer_phone = state.customer_info.get("phone", "")
+                print(f"Bot: Looking for orders with phone number: {customer_phone}")
+                
+                # Find customer_id first
+                try:
+                    with open('shop_data.json', 'r') as f:
+                        shop_data = json.load(f)
+                    all_customers = shop_data.get('customers', [])
+                    customer_id = None
+                    for customer in all_customers:
+                        if customer.get('phone') == customer_phone:
+                            customer_id = customer.get('customer_id')
+                            break
+                    
+                    if customer_id:
+                        print(f"Bot: Found customer_id: {customer_id}")
+                    else:
+                        print(f"Bot: No customer_id found for phone: {customer_phone}")
+                except Exception as e:
+                    print(f"Bot: Error looking up customer: {e}")
+                
+                customer_orders = get_customer_orders(customer_phone)
+                
+                if customer_orders:
+                    print(f"Bot: Found {len(customer_orders)} orders for you:")
+                    for i, order in enumerate(customer_orders, 1):
+                        print(f"{i}. Order ID: {order.get('order_id')} - Status: {order.get('status')} - Total: ₹{order.get('total')}")
+                    
+                    print("Bot: Which order would you like to check? (Enter the number or order ID):")
+                    state.stage = "order_selection"
+                else:
+                    print("Bot: You don't have any orders yet.")
+                    # Debug: show all available orders
+                    try:
+                        with open('shop_data.json', 'r') as f:
+                            shop_data = json.load(f)
+                        all_orders = shop_data.get('orders', [])
+                        print(f"Bot: (Debug: There are {len(all_orders)} total orders in the system)")
+                        for order in all_orders[:3]:  # Show first 3 orders as example
+                            print(f"  - Order {order.get('order_id')}: Customer ID {order.get('customer_id', 'N/A')}")
+                    except:
+                        pass
+                    
+                    # Ask if they want anything else
+                    if not ask_for_more_help():
+                        break
+                    state.stage = "menu_selection"
+                    print("Bot: What would you like to do?")
+                    print("1. Create new order")
+                    print("2. Check status of old order")
+                    print("3. Delete order")
+                    print("Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "order_selection":
+                user_choice = user_input.strip()
+                customer_phone = state.customer_info.get("phone", "")
+                customer_orders = get_customer_orders(customer_phone)
+                
+                # Try to find order by number or ID
+                selected_order = None
+                try:
+                    choice_num = int(user_choice)
+                    if 1 <= choice_num <= len(customer_orders):
+                        selected_order = customer_orders[choice_num - 1]
+                except ValueError:
+                    # Try to find by order ID
+                    for order in customer_orders:
+                        if str(order.get('order_id')) == user_choice:
+                            selected_order = order
+                            break
+                
+                if selected_order:
+                    print("Bot: Here are the details for your order:")
+                    display_order_summary(selected_order)
+                else:
+                    print(f"Bot: Could not find order with ID: {user_choice}")
+                
+                # Ask if they want anything else
+                if not ask_for_more_help():
+                    break
+                state.stage = "menu_selection"
+                print("Bot: What would you like to do?")
+                print("1. Create new order")
+                print("2. Check status of old order")
+                print("3. Delete order")
+                print("Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "delete_order":
+                # First, show customer's orders
+                customer_phone = state.customer_info.get("phone", "")
+                print(f"Bot: Looking for orders with phone number: {customer_phone}")
+                
+                customer_orders = get_customer_orders(customer_phone)
+                
+                if customer_orders:
+                    print(f"Bot: Here are your orders:")
+                    for i, order in enumerate(customer_orders, 1):
+                        print(f"{i}. Order ID: {order.get('order_id')} - Status: {order.get('status')} - Total: ₹{order.get('total')}")
+                    
+                    print("Bot: Which order would you like to delete? (Enter the number or order ID):")
+                    state.stage = "delete_order_selection"
+                else:
+                    print("Bot: You don't have any orders to delete.")
+                    
+                    # Ask if they want anything else
+                    if not ask_for_more_help():
+                        break
+                    state.stage = "menu_selection"
+                    print("Bot: What would you like to do?")
+                    print("1. Create new order")
+                    print("2. Check status of old order")
+                    print("3. Delete order")
+                    print("Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "delete_order_selection":
+                user_choice = user_input.strip()
+                customer_phone = state.customer_info.get("phone", "")
+                customer_orders = get_customer_orders(customer_phone)
+                
+                # Try to find order by number or ID
+                selected_order = None
+                try:
+                    choice_num = int(user_choice)
+                    if 1 <= choice_num <= len(customer_orders):
+                        selected_order = customer_orders[choice_num - 1]
+                except ValueError:
+                    # Try to find by order ID
+                    for order in customer_orders:
+                        if str(order.get('order_id')) == user_choice:
+                            selected_order = order
+                            break
+                
+                if selected_order:
+                    order_id = selected_order.get('order_id')
+                    print(f"Bot: You want to delete Order {order_id}. Here are the details:")
+                    display_order_summary(selected_order)
+                    
+                    print("Bot: Are you sure you want to delete this order? (yes/no):")
+                    state.stage = "confirm_delete"
+                    # Store the order to delete
+                    state.order_to_delete = selected_order
+                else:
+                    print(f"Bot: Could not find order with ID: {user_choice}")
+                    
+                    # Ask if they want anything else
+                    if not ask_for_more_help():
+                        break
+                    state.stage = "menu_selection"
+                    print("Bot: What would you like to do?")
+                    print("1. Create new order")
+                    print("2. Check status of old order")
+                    print("3. Delete order")
+                    print("Please choose 1, 2, or 3:")
+                continue
+            
+            elif state.stage == "confirm_delete":
+                if user_input.lower() in ["yes", "y", "confirm", "sure"]:
+                    order_to_delete = getattr(state, 'order_to_delete', None)
+                    if order_to_delete:
+                        order_id = order_to_delete.get('order_id')
+                        print(f"Bot: Deleting order {order_id}...")
+                        
+                        # Delete from backend
+                        backend_success = delete_order_from_backend(order_id)
+                        
+                        # Delete from shop_data.json
+                        deleted_order = delete_order_from_shop_data(order_id)
+                        
+                        if backend_success and deleted_order:
+                            print(f"✅ Order {order_id} has been successfully deleted!")
+                            print(f"Bot: Deleted order details:")
+                            display_order_summary(deleted_order)
+                        elif deleted_order:
+                            print(f"✅ Order {order_id} has been deleted from local data!")
+                            print("⚠️  Note: Backend deletion may have failed, but order is removed from your view.")
+                        else:
+                            print(f"❌ Failed to delete order {order_id}")
+                    else:
+                        print("Bot: Error: No order selected for deletion.")
+                else:
+                    print("Bot: Order deletion cancelled.")
+                
+                # Clear the stored order
+                if hasattr(state, 'order_to_delete'):
+                    delattr(state, 'order_to_delete')
+                
+                # Ask if they want anything else
+                if not ask_for_more_help():
+                    break
+                state.stage = "menu_selection"
+                print("Bot: What would you like to do?")
+                print("1. Create new order")
+                print("2. Check status of old order")
+                print("3. Delete order")
+                print("Please choose 1, 2, or 3:")
+                continue
+            
+            # Handle ordering stage (LLM-powered)
+            elif state.stage == "ordering":
+                # Process order through LLM
+                llm_response = llm_process_conversation(state, user_input)
+                
+                # Handle item addition
+                actions = llm_response.get("actions", {})
+                if actions.get("add_item"):
+                    item_data = actions["add_item"]
+                    if item_data.get("name") and item_data.get("quantity", 0) > 0:
+                        add_item_to_order(state, item_data["name"], item_data["quantity"])
+                
+                # Handle order completion
+                if actions.get("complete_order"):
+                    if process_order_completion(state):
+                        # Reset order state for next conversation
+                        reset_order(state)
+                        state.stage = "greeting"
+                        state.customer_info = {}
+                        state.confirmations = {}
+                        print("\n" + "="*50)
+                        print("🤖 Starting new conversation...")
+                        print("Bot: Welcome to INDIA MART GROCERY! How can I help you today?")
+                        print("Bot: Can I get your phone number to look up your details?")
+                        state.stage = "phone_collection"
+                    else:
+                        print("Bot: Let's continue with your order. What else would you like?")
+                    continue
+                
+                # Handle order reset
+                if actions.get("reset_order"):
+                    reset_order(state)
+                    print("Bot: Order has been reset. What would you like to order?")
+                    continue
+                
+                # Print bot response
+                print(f"Bot: {llm_response.get('response', 'I understand. How can I help you?')}")
+                state.messages.append({"role": "assistant", "content": llm_response.get('response', '')})
+                
+                # Save state periodically
+                if len(state.messages) % 5 == 0:
+                    save_conversation_state(state)
+                
+        except KeyboardInterrupt:
+            print("\n\nBot: Thank you for calling! Have a great day!")
+            break
+        except Exception as e:
+            print(f"\n❌ Error: {e}")
+            print("Bot: I'm having technical difficulties. Please try again.")
+            continue
+    
+    # Save final state
+    save_conversation_state(state)
+
+if __name__ == "__main__":
+    main()

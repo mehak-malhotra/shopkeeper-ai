@@ -34,6 +34,11 @@ const menuItems = [
     icon: ShoppingCart,
   },
   {
+    title: "Customers",
+    url: "/dashboard/customers",
+    icon: User,
+  },
+  {
     title: "Call Logs",
     url: "/dashboard/calls",
     icon: Phone,

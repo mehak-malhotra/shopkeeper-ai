@@ -56,12 +56,16 @@ export default function InventoryPage() {
 
   useEffect(() => {
     async function fetchInventory() {
-      const res = await fetch(`http://localhost:5000/api/inventory?user_email=${encodeURIComponent(user.email)}`)
+      const res = await fetch(`http://localhost:5000/api/inventory`, {
+        headers: {
+          'Authorization': `Bearer ${user.token}`
+        }
+      })
       const data = await res.json()
       if (data.success) setProducts(data.data)
     }
-    if (user.email) fetchInventory()
-  }, [user.email])
+    if (user.token) fetchInventory()
+  }, [user.token])
 
   const filteredProducts = products.filter(
     (product) =>
@@ -84,11 +88,13 @@ export default function InventoryPage() {
       quantity: Number.parseInt(newProduct.quantity),
       minStock: Number.parseInt(newProduct.minStock) || 5,
       category: newProduct.category || "General",
-      user_email: user.email,
     }
     const res = await fetch("http://localhost:5000/api/inventory", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { 
+        "Content-Type": "application/json",
+        'Authorization': `Bearer ${user.token}`
+      },
       body: JSON.stringify(product),
     })
     const data = await res.json()
@@ -108,24 +114,30 @@ export default function InventoryPage() {
 
   const handleEditProduct = async () => {
     if (!editingProduct) return
-    const res = await fetch(`http://localhost:5000/api/inventory/${editingProduct.id}`, {
+    const res = await fetch(`http://localhost:5000/api/inventory/${encodeURIComponent(editingProduct.name)}`, {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...editingProduct, user_email: user.email }),
+      headers: { 
+        "Content-Type": "application/json",
+        'Authorization': `Bearer ${user.token}`
+      },
+      body: JSON.stringify({ ...editingProduct }),
     })
     const data = await res.json()
-    if (data.success) setProducts((prev) => prev.map((p) => (p.id === editingProduct.id ? data.data : p)))
+    if (data.success) setProducts((prev) => prev.map((p) => (p.name === editingProduct.name ? data.data : p)))
     setEditingProduct(null)
     setIsEditDialogOpen(false)
     toast({ title: "Product updated", description: `${editingProduct.name} has been updated` })
   }
 
-  const handleDeleteProduct = async (productId: string) => {
-    const res = await fetch(`http://localhost:5000/api/inventory/${productId}?user_email=${encodeURIComponent(user.email)}`, {
+  const handleDeleteProduct = async (productName: string) => {
+    const res = await fetch(`http://localhost:5000/api/inventory/${encodeURIComponent(productName)}`, {
       method: "DELETE",
+      headers: {
+        'Authorization': `Bearer ${user.token}`
+      }
     })
     const data = await res.json()
-    if (data.success) setProducts((prev) => prev.filter((p) => p.id !== productId))
+    if (data.success) setProducts((prev) => prev.filter((p) => p.name !== productName))
     toast({ title: "Product deleted", description: `Product has been removed from inventory` })
   }
 
@@ -266,7 +278,7 @@ export default function InventoryPage() {
         {filteredProducts.map((product) => {
           const stockStatus = getStockStatus(product)
           return (
-            <Card key={product.id} className="relative">
+            <Card key={product.name} className="relative">
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div>
@@ -403,7 +415,7 @@ export default function InventoryPage() {
                       <AlertDialogFooter>
                         <AlertDialogCancel>Cancel</AlertDialogCancel>
                         <AlertDialogAction
-                          onClick={() => handleDeleteProduct(product.id)}
+                          onClick={() => handleDeleteProduct(product.name)}
                           className="bg-red-600 hover:bg-red-700"
                         >
                           Delete

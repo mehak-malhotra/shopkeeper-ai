@@ -1,0 +1,61 @@
+{
+  "stage": "menu_selection",
+  "customer_info": {
+    "address": "123, new swarg colony",
+    "customer_id": 7,
+    "name": "bhawani",
+    "phone": "7541236565",
+    "user_email": "dhallhimanshu1234@gmail.com",
+    "password": ""
+  },
+  "order_items": [
+    {
+      "name": "Apple",
+      "quantity": 10,
+      "price": 2
+    },
+    {
+      "name": "Apple",
+      "quantity": 10,
+      "price": 2
+    },
+    {
+      "name": "Apple",
+      "quantity": 20,
+      "price": 2
+    }
+  ],
+  "total_price": 80,
+  "notes": "no",
+  "confirmations": {
+    "phone_confirmed": true,
+    "address_confirmed": true,
+    "order_complete": false,
+    "delivery_confirmed": false,
+    "key": "address_confirmed",
+    "value": true
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "2"
+    },
+    {
+      "role": "user",
+      "content": "7"
+    },
+    {
+      "role": "user",
+      "content": "no thanks"
+    },
+    {
+      "role": "user",
+      "content": "3"
+    },
+    {
+      "role": "user",
+      "content": "7"
+    }
+  ],
+  "inventory_count": 2
+}
