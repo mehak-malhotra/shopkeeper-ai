@@ -657,7 +657,8 @@ def main():
             elif state.stage == "menu_selection":
                 if user_input.strip() == "1":
                     # Create new order - fresh start
-                    reset_order(state)
+                    state.order_items = []
+                    state.total_price = 0
                     state.stage = "ordering"
                     print("Bot: Perfect! Let's create a fresh new order. What would you like to order?")
                 elif user_input.strip() == "2":
@@ -677,23 +678,7 @@ def main():
                 customer_phone = state.customer_info.get("phone", "")
                 print(f"Bot: Looking for orders with phone number: {customer_phone}")
                 
-                # Find customer_id first
-                try:
-                    with open('shop_data.json', 'r') as f:
-                        shop_data = json.load(f)
-                    all_customers = shop_data.get('customers', [])
-                    customer_id = None
-                    for customer in all_customers:
-                        if customer.get('phone') == customer_phone:
-                            customer_id = customer.get('customer_id')
-                            break
-                    
-                    if customer_id:
-                        print(f"Bot: Found customer_id: {customer_id}")
-                    else:
-                        print(f"Bot: No customer_id found for phone: {customer_phone}")
-                except Exception as e:
-                    print(f"Bot: Error looking up customer: {e}")
+
                 
                 customer_orders = get_customer_orders(customer_phone)
                 
@@ -706,16 +691,6 @@ def main():
                     state.stage = "order_selection"
                 else:
                     print("Bot: You don't have any orders yet.")
-                    # Debug: show all available orders
-                    try:
-                        with open('shop_data.json', 'r') as f:
-                            shop_data = json.load(f)
-                        all_orders = shop_data.get('orders', [])
-                        print(f"Bot: (Debug: There are {len(all_orders)} total orders in the system)")
-                        for order in all_orders[:3]:  # Show first 3 orders as example
-                            print(f"  - Order {order.get('order_id')}: Customer ID {order.get('customer_id', 'N/A')}")
-                    except:
-                        pass
                     
                     # Ask if they want anything else
                     if not ask_for_more_help():
