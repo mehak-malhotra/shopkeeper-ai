@@ -802,11 +802,17 @@ def main():
                     choice_num = int(user_choice)
                     if 1 <= choice_num <= len(customer_orders):
                         selected_order = customer_orders[choice_num - 1]
+                        print(f"Bot: Selected order #{choice_num}")
+                    else:
+                        print(f"Bot: Invalid choice. Please enter a number between 1 and {len(customer_orders)}")
                 except ValueError:
                     # Try to find by order ID
+                    print(f"Bot: Looking for order with ID: {user_choice}")
                     for order in customer_orders:
+                        print(f"Debug: Checking order ID {order.get('order_id')} against {user_choice}")
                         if str(order.get('order_id')) == user_choice:
                             selected_order = order
+                            print(f"Bot: Found order with ID {user_choice}")
                             break
                 
                 if selected_order:
@@ -820,6 +826,9 @@ def main():
                     state.order_to_delete = selected_order
                 else:
                     print(f"Bot: Could not find order with ID: {user_choice}")
+                    print("Bot: Available orders:")
+                    for i, order in enumerate(customer_orders, 1):
+                        print(f"  {i}. Order ID: {order.get('order_id')} - Status: {order.get('status')} - Total: ₹{order.get('total')}")
                     
                     # Ask if they want anything else
                     if not ask_for_more_help():
