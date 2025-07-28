@@ -108,36 +108,7 @@ def get_user_token(email):
         print(f"❌ Authentication error: {e}")
         return None
 
-def extract_data_from_backend():
-    """Extract all data from backend and update shop_data.json"""
-    try:
-        token = get_user_token(fixed_inventory_email)
-        if not token:
-            print("❌ No authentication token available")
-            return False
-        
-        response = requests.get("http://localhost:5000/api/chatbot/data", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('success'):
-                shop_data = data.get('data', {})
-                
-                # Save to shop_data.json
-                with open('shop_data.json', 'w') as f:
-                    json.dump(shop_data, f, indent=2)
-                
-                print(f"✅ {data.get('message', 'Data extracted successfully')}")
-                return True
-            else:
-                print(f"❌ Backend error: {data.get('message', 'Unknown error')}")
-                return False
-        else:
-            print(f"❌ Data extraction failed: {response.status_code} - {response.text}")
-            return False
-    except Exception as e:
-        print(f"❌ Data extraction error: {e}")
-        return False
+
 
 def find_customer_by_phone(phone):
     """Find customer by phone number"""
@@ -188,32 +159,6 @@ def update_inventory_quantities(updates):
 def llm_process_conversation(state, user_input):
     """Process conversation with LLM and return structured response - Only for ordering"""
     
-    # Load current shop data from JSON file
-    try:
-        with open('shop_data.json', 'r') as f:
-            shop_data = json.load(f)
-    except FileNotFoundError:
-        shop_data = {
-            "customers": [],
-            "orders": [],
-            "inventory": [],
-            "current_customer": None,
-            "current_order": None,
-            "conversation_state": {
-                "stage": "greeting",
-                "customer_info": {},
-                "order_items": [],
-                "total_price": 0,
-                "notes": "",
-                "confirmations": {
-                    "phone_confirmed": False,
-                    "address_confirmed": False,
-                    "order_complete": False,
-                    "delivery_confirmed": False
-                }
-            }
-        }
-    
     # Create context for LLM
     context = {
         "current_stage": state.stage,
@@ -223,15 +168,11 @@ def llm_process_conversation(state, user_input):
         "confirmations": state.confirmations,
         "inventory": [{"name": item["name"], "price": item["price"], "quantity": item["quantity"]} for item in state.inventory],
         "conversation_history": state.messages[-5:],
-        "user_input": user_input,
-        "shop_data": shop_data
+        "user_input": user_input
     }
     
     prompt = f"""
 You are a professional store assistant for INDIA MART GROCERY. You are helping a customer with their FRESH NEW ORDER.
-
-CURRENT SHOP DATA:
-{json.dumps(shop_data, indent=2)}
 
 CONVERSATION CONTEXT:
 {json.dumps(context, indent=2)}
@@ -252,9 +193,8 @@ ORDERING RULES:
 8. If customer provides a number after an item, add that quantity to order
 9. If customer says "done", "finish", "complete", "no more" - complete the order
 10. Don't add items to order unless customer explicitly requests them
-11. Update shop_data.json with any order changes
-12. This is a FRESH ORDER - start with empty cart
-13. Don't reference any previous orders or items
+11. This is a FRESH ORDER - start with empty cart
+12. Don't reference any previous orders or items
 
 ORDERING FLOW:
 - Start with empty cart (fresh order)
@@ -272,10 +212,6 @@ RESPOND WITH JSON ONLY:
         "reset_order": true/false
     }},
     "order_update": {{"field": "value"}},
-    "shop_data_updates": {{
-        "current_order": null,
-        "conversation_state": {{}}
-    }},
     "system_message": "Optional system message for debugging"
 }}
 
@@ -297,21 +233,7 @@ EXAMPLES:
             json_str = response_text[start:end]
             llm_response = json.loads(json_str)
             
-            # Update shop_data.json with any changes from LLM
-            if llm_response.get("shop_data_updates"):
-                updates = llm_response["shop_data_updates"]
-                
-                # Update current order
-                if updates.get("current_order") is not None:
-                    shop_data["current_order"] = updates["current_order"]
-                
-                # Update conversation state
-                if updates.get("conversation_state"):
-                    shop_data.setdefault("conversation_state", {}).update(updates["conversation_state"])
-                
-                # Save updated shop_data.json
-                with open('shop_data.json', 'w') as f:
-                    json.dump(shop_data, f, indent=2)
+
             
             return llm_response
         else:
@@ -319,16 +241,14 @@ EXAMPLES:
             return {
                 "response": "I understand. How can I help you with your order?",
                 "actions": {},
-                "order_update": {},
-                "shop_data_updates": {}
+                "order_update": {}
             }
     except Exception as e:
         print(f"LLM Error: {e}")
         return {
             "response": "I'm having trouble understanding. Could you please repeat that?",
             "actions": {},
-            "order_update": {},
-            "shop_data_updates": {}
+            "order_update": {}
         }
 
 def save_conversation_state(state, filename="conversation_state.json"):
@@ -475,17 +395,25 @@ def get_all_orders():
         return []
 
 def get_customer_orders(customer_phone):
-    """Get all orders for a specific customer from shop_data.json using customer_id"""
+    """Get all orders for a specific customer from database using customer_id"""
     try:
-        with open('shop_data.json', 'r') as f:
-            shop_data = json.load(f)
+        token = get_user_token(fixed_inventory_email)
+        if not token:
+            print("❌ No authentication token available")
+            return []
         
-        all_orders = shop_data.get('orders', [])
-        all_customers = shop_data.get('customers', [])
+        # First get all customers to find the customer_id
+        response = requests.get("http://localhost:5000/api/customers", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code != 200:
+            print(f"❌ Failed to get customers: {response.status_code}")
+            return []
         
-        # Find the customer_id for this phone number
+        customers_data = response.json().get('data', [])
+        
+        # Find customer by phone number
         customer_id = None
-        for customer in all_customers:
+        for customer in customers_data:
             if customer.get('phone') == customer_phone:
                 customer_id = customer.get('customer_id')
                 break
@@ -494,11 +422,20 @@ def get_customer_orders(customer_phone):
             print(f"Bot: Could not find customer_id for phone number: {customer_phone}")
             return []
         
+        # Get all orders
+        response = requests.get("http://localhost:5000/api/orders", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code != 200:
+            print(f"❌ Failed to get orders: {response.status_code}")
+            return []
+        
+        orders_data = response.json().get('data', [])
+        
         # Filter orders for this customer by customer_id
-        customer_orders = [order for order in all_orders if order.get('customer_id') == customer_id]
+        customer_orders = [order for order in orders_data if order.get('customer_id') == customer_id]
         return customer_orders
     except Exception as e:
-        print(f"❌ Error reading orders from shop_data.json: {e}")
+        print(f"❌ Error getting customer orders from database: {e}")
         return []
 
 def display_order_summary(order):
@@ -609,24 +546,14 @@ def delete_order_from_backend(order_id):
         return False
 
 def delete_order_from_shop_data(order_id):
-    """Delete order from shop_data.json"""
+    """Delete order from database (this function is now redundant since we use backend directly)"""
     try:
-        with open('shop_data.json', 'r') as f:
-            shop_data = json.load(f)
-        
-        orders = shop_data.get('orders', [])
-        # Find and remove the order
-        for i, order in enumerate(orders):
-            if str(order.get('order_id')) == str(order_id):
-                deleted_order = orders.pop(i)
-                # Save updated shop_data.json
-                with open('shop_data.json', 'w') as f:
-                    json.dump(shop_data, f, indent=2)
-                return deleted_order
-        
-        return None
+        # Since we're now using the database directly, this function is redundant
+        # The backend deletion in delete_order_from_backend is sufficient
+        print(f"✅ Order {order_id} deleted from backend")
+        return {"order_id": order_id, "status": "deleted"}
     except Exception as e:
-        print(f"❌ Error deleting order from shop_data.json: {e}")
+        print(f"❌ Error in delete_order_from_shop_data: {e}")
         return None
 
 # Main conversation flow - Fully LLM-driven
@@ -638,21 +565,9 @@ def main():
     state = load_conversation_state()
     state.user_email = fixed_inventory_email
     
-    # Extract data from backend
-    print("📦 Extracting data from backend...")
-    if extract_data_from_backend():
-        # Load the extracted data
-        try:
-            with open('shop_data.json', 'r') as f:
-                shop_data = json.load(f)
-            state.inventory = shop_data.get('inventory', [])
-            print(f"✅ Loaded {len(state.inventory)} inventory items")
-        except Exception as e:
-            print(f"❌ Error loading extracted data: {e}")
-            state.inventory = []
-    else:
-        print("⚠️  Using fallback inventory data")
-        state.inventory = get_inventory()
+    # Get inventory directly from backend
+    print("📦 Loading inventory from backend...")
+    state.inventory = get_inventory()
     
     if state.inventory:
         print(f"✅ Found {len(state.inventory)} items in inventory")
