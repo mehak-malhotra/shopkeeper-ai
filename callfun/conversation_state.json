@@ -1,5 +1,5 @@
 {
-  "stage": "ordering",
+  "stage": "menu_selection",
   "customer_info": {
     "phone": "7541236565",
     "address": "123, new swarg colony",
@@ -18,24 +18,24 @@
   },
   "messages": [
     {
-      "role": "assistant",
-      "content": "Okay, I see you've entered some characters that I don't quite understand. Could you please tell me what you'd like to order from our grocery section? We have fresh apples and bananas today!"
+      "role": "user",
+      "content": "yes"
     },
     {
       "role": "user",
-      "content": "cd callfun; python llm_chatbot.py"
-    },
-    {
-      "role": "assistant",
-      "content": "I'm sorry, I didn't quite understand that. Could you please tell me what you would like to order from our grocery section? We have fresh apples and bananas today!"
+      "content": "3"
     },
     {
       "role": "user",
-      "content": "q\u0004\u0003"
+      "content": "7"
     },
     {
-      "role": "assistant",
-      "content": "I'm sorry, I didn't understand that. Could you please tell me what you would like to order from our grocery section? We have fresh apples and bananas today!"
+      "role": "user",
+      "content": "1"
+    },
+    {
+      "role": "user",
+      "content": "yes"
     }
   ],
   "inventory_count": 2

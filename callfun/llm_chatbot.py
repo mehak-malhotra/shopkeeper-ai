@@ -516,7 +516,12 @@ def ask_for_more_help():
     print("Bot: Is there anything else I can help you with today?")
     user_response = input("You: ").strip()
     
-    # Process with LLM
+    # Check for exit keywords
+    if any(word in user_response.lower() for word in ["no", "nope", "nothing", "bye", "exit", "quit", "goodbye", "thanks", "thank you"]):
+        print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
+        return False  # Exit the bot
+    
+    # Process with LLM for more nuanced responses
     llm_result = process_user_input(user_response)
     
     if llm_result.get("action") == "exit":
@@ -635,7 +640,7 @@ def main():
                 print("1. Create new order")
                 print("2. Check status of old order")
                 print("3. Delete order")
-                print("Please choose 1, 2, or 3:")
+                print("Bot: Just let me know which option you'd like:")
                 continue
             
             elif state.stage == "address_confirmation":
@@ -664,11 +669,11 @@ def main():
                 elif user_input.strip() == "2":
                     # Check status of old order
                     state.stage = "check_order_status"
-                    print("Bot: I'll check your order status. Please provide your order ID:")
+                    print("Bot: I'll check your order status.")
                 elif user_input.strip() == "3":
                     # Delete order
                     state.stage = "delete_order"
-                    print("Bot: I'll help you delete an order. Please provide your order ID:")
+                    print("Bot: I'll help you delete an order.")
                 else:
                     print("Bot: Please choose 1, 2, or 3:")
                 continue
@@ -735,7 +740,7 @@ def main():
                 print("1. Create new order")
                 print("2. Check status of old order")
                 print("3. Delete order")
-                print("Please choose 1, 2, or 3:")
+                print("Bot: Just let me know which option you'd like:")
                 continue
             
             elif state.stage == "delete_order":
