@@ -1,41 +1,44 @@
 {
-  "stage": "menu_selection",
+  "stage": "ordering",
   "customer_info": {
-    "phone": "7541236565",
-    "address": "123, new swarg colony",
-    "customer_id": 7,
-    "name": "bhawani",
+    "phone": "7529805116",
+    "address": "12, secotr 14 , mohali",
+    "customer_id": 9,
+    "name": "amandeep singh",
     "user_email": "dhallhimanshu1234@gmail.com"
   },
-  "order_items": [],
-  "total_price": 0,
-  "notes": "",
+  "order_items": [
+    {
+      "name": "Banana",
+      "quantity": 2,
+      "price": 1
+    }
+  ],
+  "total_price": 2,
+  "notes": "dho ke denaa bhai",
   "confirmations": {
-    "phone_confirmed": false,
-    "address_confirmed": true,
-    "order_complete": false,
-    "delivery_confirmed": false
+    "address_confirmed": true
   },
   "messages": [
-    {
-      "role": "user",
-      "content": "yes"
-    },
-    {
-      "role": "user",
-      "content": "3"
-    },
-    {
-      "role": "user",
-      "content": "7"
-    },
     {
       "role": "user",
       "content": "1"
     },
     {
       "role": "user",
-      "content": "yes"
+      "content": "banana"
+    },
+    {
+      "role": "assistant",
+      "content": "Okay, you said 'banana'. How many bananas would you like to add to your order?"
+    },
+    {
+      "role": "user",
+      "content": "3"
+    },
+    {
+      "role": "assistant",
+      "content": "Okay, you'd like 3 bananas. Unfortunately, we only have 2 bananas in stock right now. Would you like to add 2 bananas to your order instead?"
     }
   ],
   "inventory_count": 2
