@@ -38,17 +38,8 @@ fixed_inventory_email = "dhallhimanshu1234@gmail.com"
 def get_user_token(email):
     """Get authentication token"""
     try:
-        response = requests.post("http://localhost:5000/api/auth/login", 
-                               json={"email": email, "password": "1234567890"})
-        if response.status_code == 200:
-            return response.json().get('token')
-        
-        response = requests.post("http://localhost:5000/api/auth/login", 
-                               json={"email": email, "password": "password"})
-        if response.status_code == 200:
-            return response.json().get('token')
-        
-        return None
+        from enhanced_conversation_state import get_cached_token
+        return get_cached_token()
     except Exception as e:
         print(f"❌ Authentication error: {e}")
         return None
@@ -88,19 +79,8 @@ def add_customer(customer_data):
 def get_inventory():
     """Get current inventory from backend"""
     try:
-        token = get_user_token(fixed_inventory_email)
-        if not token:
-            print("❌ No authentication token available")
-            return []
-        
-        response = requests.get("http://localhost:5000/api/inventory", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code == 200:
-            data = response.json()
-            return data.get('data', [])
-        else:
-            print(f"❌ Inventory fetch failed: {response.status_code} - {response.text}")
-        return []
+        from enhanced_conversation_state import get_cached_inventory
+        return get_cached_inventory()
     except Exception as e:
         print(f"❌ Inventory fetch error: {e}")
         return []
@@ -108,43 +88,8 @@ def get_inventory():
 def get_customer_orders(customer_phone):
     """Get all orders for a specific customer"""
     try:
-        token = get_user_token(fixed_inventory_email)
-        if not token:
-            print("❌ No authentication token available")
-            return []
-        
-        # First get all customers to find the customer_id
-        response = requests.get("http://localhost:5000/api/customers", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code != 200:
-            print(f"❌ Failed to get customers: {response.status_code}")
-            return []
-        
-        customers_data = response.json().get('data', [])
-        
-        # Find customer by phone number
-        customer_id = None
-        for customer in customers_data:
-            if customer.get('phone') == customer_phone:
-                customer_id = customer.get('customer_id')
-                break
-        
-        if customer_id is None:
-            print(f"Bot: Could not find customer_id for phone number: {customer_phone}")
-            return []
-        
-        # Get all orders
-        response = requests.get("http://localhost:5000/api/orders", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code != 200:
-            print(f"❌ Failed to get orders: {response.status_code}")
-            return []
-        
-        orders_data = response.json().get('data', [])
-        
-        # Filter orders for this customer by customer_id
-        customer_orders = [order for order in orders_data if order.get('customer_id') == customer_id]
-        return customer_orders
+        from enhanced_conversation_state import get_cached_customer_orders
+        return get_cached_customer_orders(customer_phone)
     except Exception as e:
         print(f"❌ Error getting customer orders from database: {e}")
         return []
@@ -173,8 +118,9 @@ def process_customer_interaction(customer_phone: str, user_input: str) -> str:
         end_conversation(customer_phone)
         return "Thank you for calling INDIA MART GROCERY! Have a great day!"
     
-    # Handle conversation end keywords
-    if any(word in user_input.lower() for word in ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "done", "finish", "complete", "yes", "perfect", "okay", "ok"]):
+    # Handle conversation end keywords - only end when customer explicitly indicates completion
+    end_keywords = ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "thankyou", "done", "finish", "complete", "that's it", "that's all", "nothing else", "i'm done", "i'm finished", "that's everything", "that's all i need", "nothing more", "complete my order", "finalize my order"]
+    if any(word in user_input.lower() for word in end_keywords):
         # Check if we're in ordering stage and have items
         state = get_or_create_conversation(customer_phone)
         if state.stage == "ordering" and state.current_order.get('items'):
@@ -252,68 +198,65 @@ def main():
     print("- Automatic state cleanup")
     print("=" * 50)
 
-    while True:
-        try:
-            print("\n📞 Enter customer phone number (or 'quit' to exit):")
-            customer_phone = input("Phone: ").strip()
+    try:
+        print("\n📞 Enter customer phone number (or 'quit' to exit):")
+        customer_phone = input("Phone: ").strip()
 
-            if customer_phone.lower() in ["quit", "exit", "bye"]:
-                break
+        if customer_phone.lower() in ["quit", "exit", "bye"]:
+            return
 
-            if not customer_phone:
-                print("❌ Please enter a valid phone number")
-                continue
+        if not customer_phone:
+            print("❌ Please enter a valid phone number")
+            return
 
-            print(f"\n🎯 Starting conversation with customer: {customer_phone}")
+        print(f"\n🎯 Starting conversation with customer: {customer_phone}")
 
-            while True:
-                try:
-                    user_input = input("Customer: ").strip()
+        while True:
+            try:
+                user_input = input("Customer: ").strip()
 
-                    # Handle empty input or quit
-                    if not user_input:
-                        print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
-                        end_conversation(customer_phone)
-                        break
-
-                    if user_input.lower() in ["quit", "exit", "bye"]:
-                        print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
-                        end_conversation(customer_phone)
-                        break
-
-                    response = process_customer_interaction(customer_phone, user_input)
-                    print(f"Bot: {response}")
-
-                    # Check if conversation should end
-                    if "Thank you for calling" in response or "Have a great day" in response:
-                        break
-
-                except KeyboardInterrupt:
-                    print("\n\nBot: Thank you for calling INDIA MART GROCERY! Have a great day!")
+                # Handle empty input or quit
+                if not user_input:
+                    print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
                     end_conversation(customer_phone)
                     break
-                except Exception as e:
-                    print(f"\n❌ Error: {e}")
-                    print("Bot: I'm having technical difficulties. Please try again.")
-                    continue
 
-            # Clean up after each conversation
-            try:
-                cleanup_inactive_conversations()
-                active_conversations = get_active_conversations()
-                if active_conversations:
-                    print(f"\n📊 Active conversations: {len(active_conversations)}")
-                    for phone in active_conversations.keys():
-                        print(f"  - {phone}")
+                if user_input.lower() in ["quit", "exit", "bye"]:
+                    print("Bot: Thank you for calling INDIA MART GROCERY! Have a great day!")
+                    end_conversation(customer_phone)
+                    break
+
+                response = process_customer_interaction(customer_phone, user_input)
+                print(f"Bot: {response}")
+
+                # Check if conversation should end
+                if "Thank you for calling" in response or "Have a great day" in response:
+                    break
+
+            except KeyboardInterrupt:
+                print("\n\nBot: Thank you for calling INDIA MART GROCERY! Have a great day!")
+                end_conversation(customer_phone)
+                break
             except Exception as e:
-                print(f"⚠️  Cleanup warning: {e}")
+                print(f"\n❌ Error: {e}")
+                print("Bot: I'm having technical difficulties. Please try again.")
+                continue
 
-        except KeyboardInterrupt:
-            print("\n\n👋 Goodbye! Cleaning up...")
-            break
+        # Clean up after the conversation
+        try:
+            cleanup_inactive_conversations()
+            active_conversations = get_active_conversations()
+            if active_conversations:
+                print(f"\n📊 Active conversations: {len(active_conversations)}")
+                for phone in active_conversations.keys():
+                    print(f"  - {phone}")
         except Exception as e:
-            print(f"\n❌ System error: {e}")
-            continue
+            print(f"⚠️  Cleanup warning: {e}")
+
+    except KeyboardInterrupt:
+        print("\n\n👋 Goodbye! Cleaning up...")
+    except Exception as e:
+        print(f"\n❌ System error: {e}")
 
     # Final cleanup
     try:
@@ -324,10 +267,10 @@ def main():
                 end_conversation(phone)
             except Exception as e:
                 print(f"⚠️  Error cleaning up {phone}: {e}")
-        
+
         print("✅ All conversations cleaned up. Goodbye!")
     except Exception as e:
         print(f"⚠️  Final cleanup warning: {e}")
 
 if __name__ == "__main__":
-    main() 
+    main()

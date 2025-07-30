@@ -1,5 +1,5 @@
 {
-  "stage": "ordering",
+  "stage": "phone_collection",
   "customer_info": {
     "phone": "7529805116",
     "address": "12, secotr 14 , mohali",
@@ -41,5 +41,5 @@
       "content": "Okay, you'd like 3 bananas. Unfortunately, we only have 2 bananas in stock right now. Would you like to add 2 bananas to your order instead?"
     }
   ],
-  "inventory_count": 2
+  "inventory_count": 0
 }

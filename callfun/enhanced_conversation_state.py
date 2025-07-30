@@ -3,10 +3,11 @@ import json
 import certifi
 from pymongo import MongoClient
 import google.generativeai as genai
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 import os
 from typing import Dict, List, Optional, Any
+import re
 
 # LLM setup (Gemini)
 GEMINI_API_KEY = "AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk"
@@ -27,6 +28,202 @@ orders_collection = db["orders"]
 
 # Global conversation states for multiple customers
 ACTIVE_CONVERSATIONS: Dict[str, 'ConversationState'] = {}
+
+# Performance optimization: Add caching
+CACHED_TOKEN = None
+CACHED_TOKEN_EXPIRY = None
+INVENTORY_CACHE = None
+INVENTORY_CACHE_EXPIRY = None
+CUSTOMER_ORDERS_CACHE = {}
+CUSTOMER_ORDERS_CACHE_EXPIRY = {}
+
+def get_cached_token():
+    """Get cached authentication token"""
+    global CACHED_TOKEN, CACHED_TOKEN_EXPIRY
+    
+    # Check if token is still valid (cache for 1 hour)
+    if CACHED_TOKEN and CACHED_TOKEN_EXPIRY and datetime.utcnow() < CACHED_TOKEN_EXPIRY:
+        return CACHED_TOKEN
+    
+    # Get new token
+    try:
+        response = requests.post("http://localhost:5000/api/auth/login", 
+                               json={"email": "dhallhimanshu1234@gmail.com", "password": "1234567890"})
+        if response.status_code == 200:
+            CACHED_TOKEN = response.json().get('token')
+            CACHED_TOKEN_EXPIRY = datetime.utcnow() + timedelta(hours=1)
+            return CACHED_TOKEN
+        
+        response = requests.post("http://localhost:5000/api/auth/login", 
+                               json={"email": "dhallhimanshu1234@gmail.com", "password": "password"})
+        if response.status_code == 200:
+            CACHED_TOKEN = response.json().get('token')
+            CACHED_TOKEN_EXPIRY = datetime.utcnow() + timedelta(hours=1)
+            return CACHED_TOKEN
+        
+        return None
+    except Exception as e:
+        print(f"❌ Authentication error: {e}")
+        return None
+
+def get_cached_inventory():
+    """Get cached inventory data"""
+    global INVENTORY_CACHE, INVENTORY_CACHE_EXPIRY
+    
+    # Check if cache is still valid (cache for 5 minutes)
+    if INVENTORY_CACHE and INVENTORY_CACHE_EXPIRY and datetime.utcnow() < INVENTORY_CACHE_EXPIRY:
+        return INVENTORY_CACHE
+    
+    # Get fresh inventory
+    try:
+        token = get_cached_token()
+        if not token:
+            return []
+        
+        response = requests.get("http://localhost:5000/api/inventory", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code == 200:
+            data = response.json()
+            INVENTORY_CACHE = data.get('data', [])
+            INVENTORY_CACHE_EXPIRY = datetime.utcnow() + timedelta(minutes=5)
+            return INVENTORY_CACHE
+        else:
+            print(f"❌ Inventory fetch failed: {response.status_code}")
+        return []
+    except Exception as e:
+        print(f"❌ Inventory refresh error: {e}")
+        return []
+
+def get_cached_customer_orders(customer_phone):
+    """Get cached customer orders"""
+    global CUSTOMER_ORDERS_CACHE, CUSTOMER_ORDERS_CACHE_EXPIRY
+    
+    # Check if cache is still valid (cache for 2 minutes)
+    if (customer_phone in CUSTOMER_ORDERS_CACHE and 
+        customer_phone in CUSTOMER_ORDERS_CACHE_EXPIRY and 
+        datetime.utcnow() < CUSTOMER_ORDERS_CACHE_EXPIRY[customer_phone]):
+        return CUSTOMER_ORDERS_CACHE[customer_phone]
+    
+    # Get fresh orders
+    try:
+        token = get_cached_token()
+        if not token:
+            return []
+        
+        # Get all customers to find the customer_id
+        response = requests.get("http://localhost:5000/api/customers", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code != 200:
+            return []
+        
+        customers_data = response.json().get('data', [])
+        
+        # Find customer by phone number
+        customer_id = None
+        for customer in customers_data:
+            if customer.get('phone') == customer_phone:
+                customer_id = customer.get('customer_id')
+                break
+        
+        if customer_id is None:
+            return []
+        
+        # Get all orders
+        response = requests.get("http://localhost:5000/api/orders", 
+                              headers={"Authorization": f"Bearer {token}"})
+        if response.status_code != 200:
+            return []
+        
+        orders_data = response.json().get('data', [])
+        
+        # Filter orders for this customer
+        customer_orders = [order for order in orders_data if order.get('customer_id') == customer_id]
+        
+        # Cache the result
+        CUSTOMER_ORDERS_CACHE[customer_phone] = customer_orders
+        CUSTOMER_ORDERS_CACHE_EXPIRY[customer_phone] = datetime.utcnow() + timedelta(minutes=2)
+        
+        return customer_orders
+    except Exception as e:
+        print(f"❌ Error getting customer orders: {e}")
+        return []
+
+def parse_quantity_from_text(text: str) -> int:
+    """Parse quantity from natural language text"""
+    text = text.lower()
+    
+    # Common quantity mappings
+    quantity_mappings = {
+        'dozen': 12,
+        'pack': 1,
+        'packs': 1,
+        'packet': 1,
+        'packets': 1,
+        'kg': 1,
+        'kilo': 1,
+        'kilogram': 1,
+        'liter': 1,
+        'litre': 1,
+        'l': 1,
+        'ml': 1,
+        'gram': 1,
+        'g': 1,
+        'piece': 1,
+        'pieces': 1,
+        'bottle': 1,
+        'bottles': 1,
+        'bag': 1,
+        'bags': 1,
+        'box': 1,
+        'boxes': 1,
+        'can': 1,
+        'cans': 1
+    }
+    
+    # Extract number and unit
+    numbers = re.findall(r'\d+', text)
+    if not numbers:
+        return 1  # Default to 1 if no number found
+    
+    quantity = int(numbers[0])
+    
+    # Check for units and multiply accordingly
+    for unit, multiplier in quantity_mappings.items():
+        if unit in text:
+            return quantity * multiplier
+    
+    return quantity
+
+def extract_items_from_text(text: str) -> list:
+    """Extract items and quantities from natural language text"""
+    items = []
+    
+    # Common patterns
+    patterns = [
+        r'(\d+)\s*(dozen|pack|packs|packet|packets|kg|kilo|kilogram|liter|litre|l|ml|gram|g|piece|pieces|bottle|bottles|bag|bags|box|boxes|can|cans)?\s+(\w+(?:\s+\w+)*)',
+        r'(\w+(?:\s+\w+)*)\s+(\d+)\s*(dozen|pack|packs|packet|packets|kg|kilo|kilogram|liter|litre|l|ml|gram|g|piece|pieces|bottle|bottles|bag|bags|box|boxes|can|cans)?',
+        r'(\d+)\s+(\w+(?:\s+\w+)*)',
+        r'(\w+(?:\s+\w+)*)\s+(\d+)'
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text.lower())
+        for match in matches:
+            if len(match) >= 2:
+                if match[0].isdigit():
+                    quantity = parse_quantity_from_text(' '.join(match))
+                    item_name = ' '.join(match[1:])
+                else:
+                    item_name = match[0]
+                    quantity = parse_quantity_from_text(' '.join(match[1:]))
+                
+                if item_name.strip():
+                    items.append({
+                        'name': item_name.strip(),
+                        'quantity': quantity
+                    })
+    
+    return items
 
 class ConversationState:
     """
@@ -95,37 +292,14 @@ class ConversationState:
     def _refresh_inventory(self):
         """Get fresh inventory from backend"""
         try:
-            token = self._get_user_token()
-            if not token:
-                return
-            
-            response = requests.get("http://localhost:5000/api/inventory", 
-                                  headers={"Authorization": f"Bearer {token}"})
-            if response.status_code == 200:
-                data = response.json()
-                self.inventory_snapshot = data.get('data', [])
-            else:
-                print(f"❌ Inventory fetch failed: {response.status_code}")
+            # Use cached inventory instead of making HTTP request
+            self.inventory_snapshot = get_cached_inventory()
         except Exception as e:
             print(f"❌ Inventory refresh error: {e}")
     
     def _get_user_token(self):
         """Get authentication token"""
-        try:
-            response = requests.post("http://localhost:5000/api/auth/login", 
-                                   json={"email": self.user_email, "password": "1234567890"})
-            if response.status_code == 200:
-                return response.json().get('token')
-            
-            response = requests.post("http://localhost:5000/api/auth/login", 
-                                   json={"email": self.user_email, "password": "password"})
-            if response.status_code == 200:
-                return response.json().get('token')
-            
-            return None
-        except Exception as e:
-            print(f"❌ Authentication error: {e}")
-            return None
+        return get_cached_token()
     
     def update_inventory_item(self, item_name: str, quantity_change: int):
         """Update inventory item quantity during conversation"""
@@ -148,10 +322,51 @@ class ConversationState:
         return [item for item in self.inventory_snapshot if item['quantity'] > 0]
     
     def find_item(self, item_name: str):
-        """Find item by name (case-insensitive)"""
+        """Find item by name (case-insensitive) with improved matching"""
+        # First try exact match
         for item in self.inventory_snapshot:
             if item['name'].lower() == item_name.lower():
                 return item
+        
+        # Try partial match (item_name contains in item name)
+        for item in self.inventory_snapshot:
+            if item_name.lower() in item['name'].lower():
+                return item
+        
+        # Try reverse partial match (item name contains item_name)
+        for item in self.inventory_snapshot:
+            if item['name'].lower() in item_name.lower():
+                return item
+        
+        # Try word-by-word matching
+        item_words = item_name.lower().split()
+        for item in self.inventory_snapshot:
+            item_name_words = item['name'].lower().split()
+            if any(word in item_name_words for word in item_words):
+                return item
+        
+        # Common item name mappings
+        item_mappings = {
+            'milk': ['amul', 'taaza', 'milk'],
+            'apple': ['apple'],
+            'garam masala': ['masala', 'spice'],
+            'atta': ['aashirvaad', 'atta', 'wheat'],
+            'oil': ['sunflower', 'oil', 'fortune'],
+            'bread': ['bread'],
+            'rice': ['rice'],
+            'sugar': ['sugar'],
+            'salt': ['salt'],
+            'tea': ['tea'],
+            'coffee': ['coffee']
+        }
+        
+        # Check mappings
+        for search_term, keywords in item_mappings.items():
+            if search_term in item_name.lower():
+                for item in self.inventory_snapshot:
+                    if any(keyword in item['name'].lower() for keyword in keywords):
+                        return item
+        
         return None
     
     def add_item_to_order(self, item_name: str, quantity: int):
@@ -465,15 +680,12 @@ def process_conversation_with_llm(customer_phone: str, user_input: str) -> str:
 def should_end_conversation(user_input: str, ai_response: str, state: ConversationState) -> bool:
     """Check if conversation should end based on user input and context"""
     
-    # Check for end keywords in user input
-    end_keywords = ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "done", "finish", "complete", "yes", "perfect", "okay", "ok"]
+    # Check for end keywords in user input - only end when customer explicitly indicates completion
+    end_keywords = ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "thankyou", "done", "finish", "complete", "that's it", "that's all", "nothing else", "i'm done", "i'm finished", "that's everything", "that's all i need", "nothing more", "complete my order", "finalize my order"]
     
     if any(word in user_input.lower() for word in end_keywords):
-        # If we have items in order, finalize it
-        if state.current_order.get('items'):
-            return True
-        else:
-            return True
+        # Always end when customer explicitly indicates completion
+        return True
     
     # Check if AI response indicates order completion
     completion_phrases = [
@@ -526,16 +738,68 @@ def extract_response_from_llm(llm_output: str) -> str:
         else:
             return "I understand. How can I help you?"
 
+def process_user_input_for_items(user_input: str, state: ConversationState) -> list:
+    """Process user input to extract items before sending to LLM"""
+    extracted_items = extract_items_from_text(user_input)
+    processed_items = []
+    
+    # Handle context references like "that" or "it"
+    if any(word in user_input.lower() for word in ["that", "it", "this"]) and not extracted_items:
+        # Look for recently mentioned items in conversation
+        recent_context = state.get_recent_conversation(3)
+        for msg in recent_context:
+            if msg['role'] == 'assistant':
+                # Extract items mentioned by assistant
+                context_items = extract_items_from_text(msg['content'])
+                for item_data in context_items:
+                    found_item = state.find_item(item_data['name'])
+                    if found_item:
+                        processed_items.append({
+                            'name': found_item['name'],
+                            'quantity': item_data['quantity'],
+                            'price': found_item['price']
+                        })
+                        break  # Use the first found item
+    
+    for item_data in extracted_items:
+        item_name = item_data['name']
+        quantity = item_data['quantity']
+        
+        # Try to find the item in inventory
+        found_item = state.find_item(item_name)
+        if found_item:
+            processed_items.append({
+                'name': found_item['name'],
+                'quantity': quantity,
+                'price': found_item['price']
+            })
+        else:
+            # Item not found, but keep it for LLM to handle
+            processed_items.append({
+                'name': item_name,
+                'quantity': quantity,
+                'price': 0
+            })
+    
+    return processed_items
+
 def create_llm_prompt(state: ConversationState, user_input: str) -> str:
     """Create comprehensive LLM prompt with current state"""
     
+    # Pre-process user input to extract items
+    extracted_items = process_user_input_for_items(user_input, state)
+    
     available_items = state.get_available_items()
-    items_list = "\n".join([f"- {item['name']}: ₹{item['price']} (Stock: {item['quantity']})" for item in available_items])
+    # Limit inventory display to reduce prompt size - only show first 20 items
+    limited_items = available_items[:20]
+    items_list = "\n".join([f"- {item['name']}: ₹{item['price']} (Stock: {item['quantity']})" for item in limited_items])
+    if len(available_items) > 20:
+        items_list += f"\n... and {len(available_items) - 20} more items"
     
     state_summary = state.get_state_summary()
     
-    # Get recent conversation for context
-    recent_conversation = state.get_recent_conversation(3)
+    # Get recent conversation for context - limit to last 2 messages
+    recent_conversation = state.get_recent_conversation(2)
     conversation_context = ""
     if recent_conversation:
         conversation_context = "\nRecent conversation:\n"
@@ -550,22 +814,43 @@ def create_llm_prompt(state: ConversationState, user_input: str) -> str:
     # Get customer orders for context
     customer_orders = []
     try:
-        from enhanced_llm_chatbot import get_customer_orders
-        customer_orders = get_customer_orders(state.customer_info.get('phone', ''))
+        # Use cached customer orders instead of making HTTP request
+        customer_orders = get_cached_customer_orders(state.customer_info.get('phone', ''))
     except:
         pass
     
     orders_context = ""
     if customer_orders:
         orders_context = "\nCUSTOMER ORDERS:\n"
-        for i, order in enumerate(customer_orders, 1):
+        # Only show last 3 orders to reduce prompt size
+        for i, order in enumerate(customer_orders[-3:], 1):
             orders_context += f"{i}. Order ID: {order.get('order_id')} - Status: {order.get('status')} - Total: ₹{order.get('total')}\n"
             items = order.get('items', [])
             if items:
                 orders_context += "   Items: "
-                for item in items:
+                # Only show first 3 items to reduce prompt size
+                for item in items[:3]:
                     orders_context += f"{item.get('quantity', 0)}x{item.get('name', 'Unknown')}, "
                 orders_context = orders_context.rstrip(", ") + "\n"
+    
+    # Add extracted items context
+    extracted_items_context = ""
+    unavailable_items = []
+    if extracted_items:
+        extracted_items_context = "\nEXTRACTED ITEMS FROM USER INPUT:\n"
+        for item in extracted_items:
+            if item['price'] == 0:
+                # Item not found in inventory
+                unavailable_items.append(item['name'])
+                extracted_items_context += f"- {item['name']}: {item['quantity']} (NOT AVAILABLE)\n"
+            else:
+                extracted_items_context += f"- {item['name']}: {item['quantity']} (₹{item['price']})\n"
+    
+    # Add unavailable items context
+    unavailable_context = ""
+    if unavailable_items:
+        unavailable_context = f"\nUNAVAILABLE ITEMS: {', '.join(unavailable_items)}\n"
+        unavailable_context += "For these items, apologize and suggest alternatives from inventory."
     
     prompt = f"""
 You are a professional grocery store assistant for INDIA MART GROCERY. You are helping a customer with their order.
@@ -586,6 +871,12 @@ AVAILABLE INVENTORY (INTERNAL USE ONLY - DO NOT DISCLOSE TO CUSTOMER):
 CUSTOMER ORDERS:
 {orders_context}
 
+EXTRACTED ITEMS FROM USER INPUT:
+{extracted_items_context}
+
+UNAVAILABLE ITEMS:
+{unavailable_context}
+
 CONVERSATION FLOW FLAGS:
 {json.dumps(state.flow_flags, indent=2)}
 
@@ -596,29 +887,27 @@ USER INPUT: "{user_input}"
 
 INSTRUCTIONS:
 1. Be natural, friendly, and helpful
-2. Use the customer's name when available: {state.customer_info.get('name', '')}
-3. Handle all customer requests naturally without rigid menus
-4. If customer wants to place an order, start the ordering process
-5. If customer wants to check order status, show their orders
-6. If customer wants to delete an order, help them delete it
-7. If customer mentions specific items, add them to the order
-8. Update inventory and order as needed
-9. Use the flow flags to guide conversation
-10. If customer wants to end call, set call_ending flag
-11. Be conversational, not robotic
-12. Respond naturally, not in JSON format
-13. Always confirm customer details before finalizing orders
-14. Ask for delivery address if not provided
-15. NEVER disclose the full inventory list to customers
-16. Only mention specific items when customer asks for them
-17. For greetings, check if customer exists and greet appropriately
+2. Use customer's name when available: {state.customer_info.get('name', '')}
+3. Handle all requests naturally without rigid menus
+4. When customer mentions items, extract them using the extract_items_from_text function
+5. Use "add_items" array for multiple items
+6. Parse quantities correctly: "2 dozen" = 24, "8 packs" = 8, "5kg bag" = 1
+7. Only end when customer says "that's it", "that's all", "bye", etc.
+8. Continue after "yes" confirmations - don't end conversation
+9. Never disclose full inventory to customers
+10. If item not found or out of stock, apologize and suggest alternatives from inventory
+11. When customer says "that" or "it" referring to an item, check recent conversation context
+12. Handle item modifications: "make onions 1 kg instead of 2", "remove harpic"
+13. When customer asks about price, provide it and offer to add to order
+14. If item is not available, say "Sorry, we don't have [item] in our inventory yet" and suggest similar items
+15. Check inventory availability before adding items to order
 
 CAPABILITIES:
-- Place new orders: "I want to order", "place an order", "buy groceries"
-- Check order status: "check my orders", "order status", "my orders"
-- Delete orders: "delete order", "cancel order", "remove order"
 - Add items: "I want apples", "add bananas", "need bread"
-- Complete order: "that's all", "done", "finish", "complete"
+- Add multiple items: "add 2 dozen apples, 8 packs garam masala, and 5kg atta"
+- Modify quantities: "make onions 1 kg instead of 2", "change milk to 3 packs"
+- Remove items: "remove harpic", "take out tomatoes"
+- Complete order: "that's it", "that's all", "nothing else", "i'm done", "complete my order"
 
 GREETING EXAMPLES:
 - For existing customer: "Welcome back [Name]! How can I help you today?"
@@ -629,30 +918,30 @@ RESPOND WITH JSON ONLY:
 {{
     "response": "Your natural response to the customer",
     "actions": {{
-        "update_stage": "new_stage_or_null",
-        "update_flags": {{"flag_name": true/false}},
         "add_item": {{"name": "item_name", "quantity": 0}},
-        "remove_item": {{"name": "item_name", "quantity": 0}},
-        "clear_order": true/false,
+        "add_items": [
+            {{"name": "item_name", "quantity": 0}},
+            {{"name": "item_name", "quantity": 0}}
+        ],
+        "modify_item": {{"name": "item_name", "new_quantity": 0}},
+        "remove_item": {{"name": "item_name"}},
         "finalize_order": true/false,
-        "end_conversation": true/false,
-        "update_customer": {{"field": "value"}},
-        "check_orders": true/false,
-        "delete_order": {{"order_id": "id_or_index"}},
-        "show_order_details": {{"order_id": "id_or_index"}}
-    }},
-    "system_message": "Optional system message for debugging"
+        "end_conversation": true/false
+    }}
 }}
 
 EXAMPLES:
-- Customer says "I want to order" → Start ordering process
-- Customer says "check my orders" → Show order list
-- Customer says "delete order 123" → Delete specific order
 - Customer says "apples" → Ask for quantity and add to order
-- Customer says "done" → Complete order
+- Customer says "add 2 dozen apples, 8 packs garam masala, and 5kg atta" → Add multiple items at once using add_items array
+- Customer says "What is the price for Toor Dal?" → Provide price and offer to add
+- Customer says "Okay, add one bag of that to my order" → Add Toor Dal (from context)
+- Customer says "make onions 1 kg instead of 2" → Modify onion quantity to 1 kg
+- Customer says "remove harpic" → Remove Harpic from order
+- Customer says "yes" → Confirm and continue (don't end conversation)
+- Customer says "that's it" or "that's all" → Complete order and end conversation
 - Customer says "bye" → End conversation
-- If customer name is "John" → "Great John, I've added that to your order"
-- For greeting: "Hello" → Check customer and greet appropriately
+- Customer says "bananas" (if not in inventory) → "Sorry, we don't have bananas in our inventory yet. Would you like to try apples or oranges instead?"
+- Customer says "2 dozen bananas" (if not in inventory) → "Sorry, we don't have bananas in our inventory yet. We have apples, oranges, and other fruits available."
 """
     
     return prompt
@@ -668,24 +957,6 @@ def process_ai_actions(state: ConversationState, ai_response: str):
             data = json.loads(json_str)
             actions = data.get('actions', {})
             
-            # Process stage update
-            if actions.get('update_stage'):
-                state.stage = actions['update_stage']
-            
-            # Process flag updates
-            if actions.get('update_flags'):
-                for flag, value in actions['update_flags'].items():
-                    if flag in state.flow_flags:
-                        state.flow_flags[flag] = value
-            
-            # Process customer updates
-            if actions.get('update_customer'):
-                customer_updates = actions['update_customer']
-                if isinstance(customer_updates, dict):
-                    for field, value in customer_updates.items():
-                        if field in state.customer_info:
-                            state.customer_info[field] = value
-            
             # Process item addition
             if actions.get('add_item'):
                 item_data = actions['add_item']
@@ -695,121 +966,53 @@ def process_ai_actions(state: ConversationState, ai_response: str):
                     if item_name and quantity > 0:
                         success, message = state.add_item_to_order(item_name, quantity)
                         print(f"📦 {message}")
+                        if not success:
+                            # Item not found or out of stock - don't add to order
+                            print(f"❌ Failed to add {item_name}: {message}")
+            
+            # Process multiple items addition
+            if actions.get('add_items'):
+                items_data = actions['add_items']
+                if items_data and isinstance(items_data, list):
+                    for item_data in items_data:
+                        if isinstance(item_data, dict):
+                            item_name = item_data.get('name')
+                            quantity = item_data.get('quantity', 0)
+                            if item_name and quantity > 0:
+                                success, message = state.add_item_to_order(item_name, quantity)
+                                print(f"📦 {message}")
+                                if not success:
+                                    # Item not found or out of stock - don't add to order
+                                    print(f"❌ Failed to add {item_name}: {message}")
+            
+            # Process item modification (change quantity)
+            if actions.get('modify_item'):
+                item_data = actions['modify_item']
+                if item_data and isinstance(item_data, dict):
+                    item_name = item_data.get('name')
+                    new_quantity = item_data.get('new_quantity', 0)
+                    if item_name and new_quantity >= 0:
+                        # First remove the item, then add with new quantity
+                        state.remove_item_from_order(item_name)
+                        if new_quantity > 0:
+                            success, message = state.add_item_to_order(item_name, new_quantity)
+                            print(f"📦 {message}")
+                        else:
+                            print(f"🗑️ Removed {item_name} from order")
             
             # Process item removal
             if actions.get('remove_item'):
                 item_data = actions['remove_item']
                 if item_data and isinstance(item_data, dict):
                     item_name = item_data.get('name')
-                    quantity = item_data.get('quantity')
                     if item_name:
-                        success, message = state.remove_item_from_order(item_name, quantity)
-                        print(f"🗑️ {message}")
-            
-            # Process order clearing
-            if actions.get('clear_order'):
-                state.clear_order()
-                print("🔄 Order cleared")
+                        state.remove_item_from_order(item_name)
+                        print(f"🗑️ Removed {item_name} from order")
             
             # Process order finalization
             if actions.get('finalize_order'):
                 success, message = state.finalize_order()
                 print(f"✅ {message}")
-            
-            # Process order checking
-            if actions.get('check_orders'):
-                from enhanced_llm_chatbot import get_customer_orders, display_order_summary
-                customer_orders = get_customer_orders(state.customer_info.get('phone', ''))
-                if customer_orders:
-                    print(f"📋 Found {len(customer_orders)} orders:")
-                    for order in customer_orders:
-                        display_order_summary(order)
-                else:
-                    print("📋 No orders found for this customer")
-            
-            # Process order deletion
-            if actions.get('delete_order'):
-                delete_data = actions['delete_order']
-                if isinstance(delete_data, dict):
-                    order_id = delete_data.get('order_id')
-                    if order_id:
-                        from enhanced_llm_chatbot import get_customer_orders
-                        customer_orders = get_customer_orders(state.customer_info.get('phone', ''))
-                        try:
-                            # Try to find by index
-                            index = int(order_id) - 1
-                            if 0 <= index < len(customer_orders):
-                                order_to_delete = customer_orders[index]
-                            else:
-                                # Try to find by order ID
-                                order_to_delete = None
-                                for order in customer_orders:
-                                    if str(order.get('order_id')) == str(order_id):
-                                        order_to_delete = order
-                                        break
-                        except ValueError:
-                            # Try to find by order ID
-                            order_to_delete = None
-                            for order in customer_orders:
-                                if str(order.get('order_id')) == str(order_id):
-                                    order_to_delete = order
-                                    break
-                        
-                        if order_to_delete:
-                            try:
-                                from enhanced_llm_chatbot import get_user_token, fixed_inventory_email
-                                import requests
-                                token = get_user_token(fixed_inventory_email)
-                                if token:
-                                    response = requests.delete(f"http://localhost:5000/api/orders/{order_to_delete.get('order_id')}", 
-                                                            headers={"Authorization": f"Bearer {token}"})
-                                    if response.status_code == 200:
-                                        print(f"✅ Order {order_to_delete.get('order_id')} deleted successfully")
-                                    else:
-                                        print(f"❌ Failed to delete order {order_to_delete.get('order_id')}")
-                                else:
-                                    print("❌ Authentication failed")
-                            except Exception as e:
-                                print(f"❌ Error deleting order: {e}")
-                        else:
-                            print(f"❌ Order {order_id} not found")
-            
-            # Process order details display
-            if actions.get('show_order_details'):
-                show_data = actions['show_order_details']
-                if isinstance(show_data, dict):
-                    order_id = show_data.get('order_id')
-                    if order_id:
-                        from enhanced_llm_chatbot import get_customer_orders, display_order_summary
-                        customer_orders = get_customer_orders(state.customer_info.get('phone', ''))
-                        try:
-                            # Try to find by index
-                            index = int(order_id) - 1
-                            if 0 <= index < len(customer_orders):
-                                selected_order = customer_orders[index]
-                                display_order_summary(selected_order)
-                            else:
-                                # Try to find by order ID
-                                selected_order = None
-                                for order in customer_orders:
-                                    if str(order.get('order_id')) == str(order_id):
-                                        selected_order = order
-                                        break
-                                if selected_order:
-                                    display_order_summary(selected_order)
-                                else:
-                                    print(f"❌ Order {order_id} not found")
-                        except ValueError:
-                            # Try to find by order ID
-                            selected_order = None
-                            for order in customer_orders:
-                                if str(order.get('order_id')) == str(order_id):
-                                    selected_order = order
-                                    break
-                            if selected_order:
-                                display_order_summary(selected_order)
-                            else:
-                                print(f"❌ Order {order_id} not found")
             
             # Process conversation ending
             if actions.get('end_conversation'):
