@@ -1,0 +1,36 @@
+# Backend Dependencies for AI Grocery Store Assistant
+
+# Core Flask dependencies
+Flask>=2.3.0
+Flask-CORS>=4.0.0
+python-dotenv>=1.0.0
+
+# Database
+pymongo>=4.5.0
+certifi>=2023.7.22
+
+# HTTP and API
+requests>=2.31.0
+
+# Image Processing and OCR
+Pillow>=10.0.0
+pytesseract>=0.3.10
+
+# Fuzzy String Matching
+rapidfuzz>=3.0.0
+
+# AI and LLM
+google-generativeai>=0.3.0
+
+# Data processing
+python-dateutil>=2.8.2
+
+# Development and testing
+pytest>=7.4.0
+
+# Production deployment
+gunicorn>=21.2.0
+
+# Optional: For enhanced image processing
+# opencv-python>=4.8.0
+# numpy>=1.24.0 

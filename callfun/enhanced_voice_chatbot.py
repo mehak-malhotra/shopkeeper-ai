@@ -70,19 +70,10 @@ def listen():
             return ""
 
 def get_user_token(email):
-    """Get authentication token"""
+    """Get authentication token - use cached version from enhanced_conversation_state"""
     try:
-        response = requests.post("http://localhost:5000/api/auth/login", 
-                               json={"email": email, "password": "1234567890"})
-        if response.status_code == 200:
-            return response.json().get('token')
-        
-        response = requests.post("http://localhost:5000/api/auth/login", 
-                               json={"email": email, "password": "password"})
-        if response.status_code == 200:
-            return response.json().get('token')
-        
-        return None
+        from enhanced_conversation_state import get_cached_token
+        return get_cached_token()
     except Exception as e:
         print(f"❌ Authentication error: {e}")
         return None
@@ -120,47 +111,12 @@ def add_customer(customer_data):
         return None
 
 def get_customer_orders(customer_phone):
-    """Get all orders for a specific customer"""
+    """Get all orders for a specific customer - use cached version from enhanced_conversation_state"""
     try:
-        token = get_user_token(fixed_inventory_email)
-        if not token:
-            print("❌ No authentication token available")
-            return []
-        
-        # First get all customers to find the customer_id
-        response = requests.get("http://localhost:5000/api/customers", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code != 200:
-            print(f"❌ Failed to get customers: {response.status_code}")
-            return []
-        
-        customers_data = response.json().get('data', [])
-        
-        # Find customer by phone number
-        customer_id = None
-        for customer in customers_data:
-            if customer.get('phone') == customer_phone:
-                customer_id = customer.get('customer_id')
-                break
-        
-        if customer_id is None:
-            print(f"Bot: Could not find customer_id for phone number: {customer_phone}")
-            return []
-        
-        # Get all orders
-        response = requests.get("http://localhost:5000/api/orders", 
-                              headers={"Authorization": f"Bearer {token}"})
-        if response.status_code != 200:
-            print(f"❌ Failed to get orders: {response.status_code}")
-            return []
-        
-        orders_data = response.json().get('data', [])
-        
-        # Filter orders for this customer by customer_id
-        customer_orders = [order for order in orders_data if order.get('customer_id') == customer_id]
-        return customer_orders
+        from enhanced_conversation_state import get_cached_customer_orders
+        return get_cached_customer_orders(customer_phone)
     except Exception as e:
-        print(f"❌ Error getting customer orders from database: {e}")
+        print(f"❌ Error getting customer orders: {e}")
         return []
 
 def process_voice_customer_interaction(customer_phone: str, user_input: str) -> str:
@@ -170,10 +126,13 @@ def process_voice_customer_interaction(customer_phone: str, user_input: str) -> 
         end_conversation(customer_phone)
         return "Thank you for calling INDIA MART GROCERY! Have a great day!"
 
-    # Handle conversation end keywords
-    if any(word in user_input.lower() for word in ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "done", "finish", "complete", "yes", "perfect", "okay", "ok"]):
+    # Handle conversation end keywords - only end when customer explicitly indicates completion
+    end_keywords = ["bye", "goodbye", "exit", "quit", "end", "thank you", "thanks", "thankyou", "done", "finish", "complete", "that's it", "that's all", "nothing else", "i'm done", "i'm finished", "that's everything", "that's all i need", "nothing more", "complete my order", "finalize my order"]
+    if any(word in user_input.lower() for word in end_keywords):
+        # Check if we're in ordering stage and have items
         state = get_or_create_conversation(customer_phone)
         if state.stage == "ordering" and state.current_order.get('items'):
+            # Finalize the order before ending
             success, message = state.finalize_order()
             if success:
                 end_conversation(customer_phone)

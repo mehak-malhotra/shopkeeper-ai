@@ -12,6 +12,12 @@ from datetime import datetime
 import hashlib
 import secrets
 from functools import wraps
+import base64
+import io
+from PIL import Image
+import pytesseract
+from rapidfuzz import fuzz, process
+import json
 
 # Flask and CORS
 app = Flask(__name__)
@@ -688,6 +694,288 @@ def get_chatbot_data():
         })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
+
+def send_notification(order_id, customer_name, total_items):
+    """Send notification after order creation"""
+    try:
+        print(f"🔔 Notification: New order {order_id} created for {customer_name} with {total_items} items")
+        # In production, this could send email, SMS, or push notification
+        return True
+    except Exception as e:
+        print(f"❌ Notification error: {e}")
+        return False
+
+def preprocess_image(image):
+    """Basic image preprocessing for better OCR"""
+    try:
+        # Convert to grayscale
+        if image.mode != 'L':
+            image = image.convert('L')
+        
+        # Resize if too large (OCR works better with reasonable sizes)
+        max_size = 2000
+        if max(image.size) > max_size:
+            ratio = max_size / max(image.size)
+            new_size = tuple(int(dim * ratio) for dim in image.size)
+            image = image.resize(new_size, Image.Resampling.LANCZOS)
+        
+        return image
+    except Exception as e:
+        print(f"❌ Image preprocessing error: {e}")
+        return image
+
+def extract_items_from_ocr_text(ocr_text):
+    """Use Gemini to extract structured items from OCR text"""
+    try:
+        prompt = f"""You are a smart assistant. Given messy handwritten shopping list text, extract a JSON list of items with names and quantities. If quantity is missing, assume 1. Example output: [{{"item": "Moong Dal", "quantity": 2}}]. Ignore headers like 'India Market'. Normalize spelling errors.
+
+OCR Text: {ocr_text}
+
+Return only valid JSON array with items and quantities:"""
+        
+        headers = {"Content-Type": "application/json"}
+        params = {"key": GEMINI_API_KEY}
+        
+        gemini_data = {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        response = ext_requests.post(GEMINI_API_URL, headers=headers, params=params, json=gemini_data)
+        response.raise_for_status()
+        
+        gemini_reply = response.json()["candidates"][0]["content"]["parts"][0]["text"]
+        
+        # Extract JSON from Gemini response
+        try:
+            # Find JSON array in the response
+            start_idx = gemini_reply.find('[')
+            end_idx = gemini_reply.rfind(']') + 1
+            
+            if start_idx != -1 and end_idx != 0:
+                json_str = gemini_reply[start_idx:end_idx]
+                items = json.loads(json_str)
+                return items
+            else:
+                print(f"❌ No JSON array found in Gemini response: {gemini_reply}")
+                return []
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON parsing error: {e}")
+            print(f"Gemini response: {gemini_reply}")
+            return []
+            
+    except Exception as e:
+        print(f"❌ Gemini API error: {e}")
+        return []
+
+def fuzzy_match_items(requested_items, inventory_items):
+    """Fuzzy match requested items with inventory items"""
+    matched_items = []
+    
+    for requested_item in requested_items:
+        item_name = requested_item.get('item', '').strip()
+        requested_quantity = requested_item.get('quantity', 1)
+        
+        if not item_name:
+            continue
+        
+        # Use RapidFuzz to find best match
+        best_match = None
+        best_score = 0
+        
+        for inventory_item in inventory_items:
+            inventory_name = inventory_item.get('name', '').strip()
+            
+            # Calculate similarity score
+            score = fuzz.ratio(item_name.lower(), inventory_name.lower())
+            
+            if score >= 85 and score > best_score:  # 85% similarity threshold
+                best_match = inventory_item
+                best_score = score
+        
+        if best_match:
+            # Check stock availability
+            available_quantity = best_match.get('quantity', 0)
+            fulfilled_quantity = min(requested_quantity, available_quantity)
+            
+            if fulfilled_quantity > 0:
+                matched_items.append({
+                    'item_name': best_match['name'],
+                    'requested_quantity': requested_quantity,
+                    'fulfilled_quantity': fulfilled_quantity,
+                    'price': best_match.get('price', 0),
+                    'total_price': fulfilled_quantity * best_match.get('price', 0),
+                    'match_score': best_score,
+                    'available_stock': available_quantity
+                })
+            else:
+                print(f"⚠️ Item '{item_name}' matched to '{best_match['name']}' but out of stock")
+        else:
+            print(f"❌ No match found for item: {item_name}")
+    
+    return matched_items
+
+@app.route('/api/upload-image-order', methods=['POST'])
+@login_required
+def upload_image_order():
+    """Image-to-order workflow endpoint"""
+    try:
+        email = request.user_email
+        user = user_col.find_one({'email': email})
+        if not user:
+            return jsonify({'success': False, 'message': 'User not found'}), 404
+        
+        # Get customer info from request
+        customer_phone = request.form.get('customer_phone', '')
+        customer_name = request.form.get('customer_name', 'Unknown Customer')
+        
+        # Find or create customer
+        customer_id = None
+        customers = user.get('customers', [])
+        
+        if customer_phone:
+            for customer in customers:
+                if customer.get('phone') == customer_phone:
+                    customer_id = customer.get('customer_id')
+                    customer_name = customer.get('name', customer_name)
+                    break
+        
+        if not customer_id:
+            # Create new customer if not found
+            customer_id = get_next_customer_id(user)
+            new_customer = {
+                'customer_id': customer_id,
+                'name': customer_name,
+                'phone': customer_phone,
+                'address': '',
+                'email': ''
+            }
+            customers.append(new_customer)
+            user['customers'] = customers
+            user_col.update_one({'email': email}, {'$set': {'customers': customers}})
+        
+        # Check if image file is present
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'message': 'No image file provided'}), 400
+        
+        image_file = request.files['image']
+        if image_file.filename == '':
+            return jsonify({'success': False, 'message': 'No image file selected'}), 400
+        
+        # Process the image
+        try:
+            # Read and preprocess image
+            image = Image.open(image_file.stream)
+            processed_image = preprocess_image(image)
+            
+            # Perform OCR
+            ocr_text = pytesseract.image_to_string(processed_image)
+            print(f"📝 OCR Text: {ocr_text}")
+            
+            if not ocr_text.strip():
+                return jsonify({'success': False, 'message': 'No text found in image'}), 400
+            
+            # Extract items using Gemini
+            requested_items = extract_items_from_ocr_text(ocr_text)
+            print(f"🛒 Extracted items: {requested_items}")
+            
+            if not requested_items:
+                return jsonify({'success': False, 'message': 'No items could be extracted from image'}), 400
+            
+            # Fuzzy match with inventory
+            inventory_items = user.get('inventory', [])
+            matched_items = fuzzy_match_items(requested_items, inventory_items)
+            
+            if not matched_items:
+                return jsonify({'success': False, 'message': 'No items matched with inventory'}), 400
+            
+            # Calculate order total
+            order_total = sum(item['total_price'] for item in matched_items)
+            
+            # Generate order ID
+            next_order_id = get_next_order_id(user)
+            order_id_str = f"{next_order_id:04d}"  # Format as "0001", "0002", etc.
+            
+            # Create order object
+            order_items = []
+            for item in matched_items:
+                order_items.append({
+                    'name': item['item_name'],
+                    'quantity': item['fulfilled_quantity'],
+                    'price': item['price'],
+                    'total': item['total_price']
+                })
+            
+            new_order = {
+                'order_id': next_order_id,
+                'customer_id': customer_id,
+                'customerPhone': customer_phone,
+                'customerName': customer_name,
+                'items': order_items,
+                'total': order_total,
+                'status': 'pending',
+                'timestamp': datetime.utcnow().isoformat() + "Z",
+                'notes': f'Order created from image upload. OCR text: {ocr_text[:100]}...',
+                'source': 'image_upload'
+            }
+            
+            # Add order to user's orders
+            orders = user.get('orders', [])
+            orders.append(new_order)
+            user['orders'] = orders
+            user_col.update_one({'email': email}, {'$set': {'orders': orders}})
+            
+            # Update inventory quantities
+            inventory_updates = []
+            for item in matched_items:
+                item_name = item['item_name']
+                fulfilled_qty = item['fulfilled_quantity']
+                
+                for inv_item in inventory_items:
+                    if inv_item['name'] == item_name:
+                        inv_item['quantity'] = max(0, inv_item['quantity'] - fulfilled_qty)
+                        inventory_updates.append({
+                            'name': item_name,
+                            'quantity': -fulfilled_qty
+                        })
+                        break
+            
+            # Update inventory in database
+            user_col.update_one({'email': email}, {'$set': {'inventory': inventory_items}})
+            
+            # Send notification
+            send_notification(order_id_str, customer_name, len(matched_items))
+            
+            # Prepare response
+            response_data = {
+                'order_id': order_id_str,
+                'customer_name': customer_name,
+                'customer_phone': customer_phone,
+                'items': matched_items,
+                'total_price': order_total,
+                'status': 'pending',
+                'timestamp': new_order['timestamp'],
+                'ocr_text': ocr_text,
+                'extracted_items': requested_items,
+                'inventory_updates': inventory_updates
+            }
+            
+            return jsonify({
+                'success': True,
+                'message': f'Order {order_id_str} created successfully from image',
+                'data': response_data
+            })
+            
+        except Exception as e:
+            print(f"❌ Image processing error: {e}")
+            return jsonify({'success': False, 'message': f'Image processing error: {str(e)}'}), 500
+            
+    except Exception as e:
+        print(f"❌ Upload image order error: {e}")
+        return jsonify({'success': False, 'message': f'Server error: {str(e)}'}), 500
 
 # Run the app
 if __name__ == '__main__':
