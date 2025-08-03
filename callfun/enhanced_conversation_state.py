@@ -283,7 +283,8 @@ class ConversationState:
             "conversation_summary": "",
             "current_topic": "greeting",
             "chat_buffer": [],  # Store recent conversation history
-            "conversation_history": []  # Full conversation history
+            "conversation_history": [],  # Full conversation history
+            "last_5_messages": []  # Store last 5 messages for model context
         }
         
         # Initialize inventory
@@ -517,10 +518,17 @@ class ConversationState:
         
         # Keep only last 10 messages in buffer for LLM context
         self.context["chat_buffer"] = self.context["conversation_history"][-10:]
+        
+        # Update last 5 messages for model context
+        self.context["last_5_messages"] = self.context["conversation_history"][-5:]
     
     def get_recent_conversation(self, max_messages: int = 5):
         """Get recent conversation for LLM context"""
         return self.context["chat_buffer"][-max_messages:] if self.context["chat_buffer"] else []
+    
+    def get_last_5_messages(self):
+        """Get last 5 messages for model context"""
+        return self.context.get("last_5_messages", [])
     
     def update_context(self, user_input: str, ai_response: str, topic: str = None):
         """Update conversation context with chat buffer"""
@@ -586,6 +594,8 @@ class ConversationState:
             self.context["chat_buffer"] = []
         if "conversation_history" not in self.context:
             self.context["conversation_history"] = []
+        if "last_5_messages" not in self.context:
+            self.context["last_5_messages"] = []
 
     def end_conversation(self):
         """End conversation and cleanup"""
@@ -806,6 +816,14 @@ def create_llm_prompt(state: ConversationState, user_input: str) -> str:
         for msg in recent_conversation:
             conversation_context += f"{msg['role']}: {msg['content']}\n"
     
+    # Get last 5 messages for model context
+    last_5_messages = state.get_last_5_messages()
+    last_5_context = ""
+    if last_5_messages:
+        last_5_context = "\nLast 5 messages for context:\n"
+        for msg in last_5_messages:
+            last_5_context += f"{msg['role']}: {msg['content']}\n"
+    
     # Customer details section
     customer_details = ""
     if state.customer_info.get("name"):
@@ -853,8 +871,16 @@ def create_llm_prompt(state: ConversationState, user_input: str) -> str:
         unavailable_context += "For these items, apologize and suggest alternatives from inventory."
     
     prompt = f"""
-You are a professional grocery store assistant for INDIA MART GROCERY. You are helping a customer with their order.
-
+You are a professional store assistant for INDIA MART GROCERY. You are helping a customer with their order.
+you have complete knowledge of the store's inventory, customer orders, and conversation state.
+if a person uses words like "that" or "it" referring to an item, you should check the recent conversation context to understand what they are referring to.
+You are polite, friendly, and helpful. You can handle all requests naturally without rigid menus.
+if person uses words like want to make , reicpe etc you can suggest recipes and ingredients from the inventory , also manage the conversation state accordingly.
+if someone asks he need to make 2 pizzas or cake for 2 persons recommend the ingredients and quantity from the inventory.   
+along with it you have a good domain knowledge , for example when i say ingredients for a dish you know what are the ingredients and you can suggest alternatives if the item is not available , you can ask crooss questions as per your requirement.
+BEFORE EACH REPLY MAKE SURE YOU CHECK THE CONVERSATION STATE AND recent conversation context to provide accurate and relevant responses.
+ALSO BE CONCISE JUST TAKE THE ORDER , because people right now are usually in hurry but make sure you are polite and helpful.
+BEFORE REPLYING MAKE SURE YOU CHECK THE CONVERSATION STATE AND THE LAST 5 MESSAGES TO STAY IN CORRELATION WITH THE CONVERSATION FLOW.
 CONVERSATION STATE:
 {json.dumps(state_summary, indent=2)}
 
@@ -865,7 +891,7 @@ CUSTOMER INFO:
 CURRENT ORDER:
 {json.dumps(state.current_order, indent=2)}
 
-AVAILABLE INVENTORY (INTERNAL USE ONLY - DO NOT DISCLOSE TO CUSTOMER):
+AVAILABLE INVENTORY (INTERNAL USE - means do not disclose completeinventory to customer but you can disclose related items or suggested items or similar items):
 {items_list}
 
 CUSTOMER ORDERS:
@@ -882,6 +908,7 @@ CONVERSATION FLOW FLAGS:
 
 CURRENT STAGE: {state.stage}
 {conversation_context}
+{last_5_context}
 
 USER INPUT: "{user_input}"
 
@@ -892,10 +919,10 @@ INSTRUCTIONS:
 4. When customer mentions items, extract them using the extract_items_from_text function
 5. Use "add_items" array for multiple items
 6. Parse quantities correctly: "2 dozen" = 24, "8 packs" = 8, "5kg bag" = 1
-7. Only end when customer says "that's it", "that's all", "bye", etc.
+7. Only end when customer says he has completed the order in any textual forms,.
 8. Continue after "yes" confirmations - don't end conversation
 9. Never disclose full inventory to customers
-10. If item not found or out of stock, apologize and suggest alternatives from inventory
+10. If item not found or out of stock, apologize and suggest alternatives from inventory, dont give false promises
 11. When customer says "that" or "it" referring to an item, check recent conversation context
 12. Handle item modifications: "make onions 1 kg instead of 2", "remove harpic"
 13. When customer asks about price, provide it and offer to add to order
@@ -904,6 +931,7 @@ INSTRUCTIONS:
 
 CAPABILITIES:
 - Add items: "I want apples", "add bananas", "need bread"
+-Add recipes : "I want to make a cake, what ingredients do I need?"
 - Add multiple items: "add 2 dozen apples, 8 packs garam masala, and 5kg atta"
 - Modify quantities: "make onions 1 kg instead of 2", "change milk to 3 packs"
 - Remove items: "remove harpic", "take out tomatoes"
@@ -914,6 +942,11 @@ GREETING EXAMPLES:
 - For new customer: "Welcome to INDIA MART GROCERY! I don't have your details yet. What's your name?"
 - For general greeting: "Hello! Welcome to INDIA MART GROCERY. How can I assist you?"
 
+in case the item is a container - like milke may have a large number of items under it, like amul taaza milk, amul gold milk, amul cow milk, etc , in that case suggest all the similar items from inventory o the user and let him choose the one he wants to add to order.
+in the cases like:
+📦 Item 'chocolate' not found in inventory
+❌ Failed to add chocolate: Item 'chocolate' not found in inventory
+you should not add the item to order, just inform the customer that the item is not available and suggest alternatives from inventory.
 RESPOND WITH JSON ONLY:
 {{
     "response": "Your natural response to the customer",

@@ -251,7 +251,7 @@ def main():
                 for phone in active_conversations.keys():
                     print(f"  - {phone}")
         except Exception as e:
-            print(f"⚠️  Cleanup warning: {e}")
+            print(f"⚠  Cleanup warning: {e}")
 
     except KeyboardInterrupt:
         print("\n\n👋 Goodbye! Cleaning up...")
@@ -266,11 +266,11 @@ def main():
             try:
                 end_conversation(phone)
             except Exception as e:
-                print(f"⚠️  Error cleaning up {phone}: {e}")
+                print(f"⚠  Error cleaning up {phone}: {e}")
 
         print("✅ All conversations cleaned up. Goodbye!")
     except Exception as e:
-        print(f"⚠️  Final cleanup warning: {e}")
+        print(f"⚠  Final cleanup warning: {e}")
 
 if __name__ == "__main__":
     main()

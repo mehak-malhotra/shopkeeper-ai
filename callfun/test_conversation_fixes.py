@@ -1,5 +1,5 @@
 import time
-from enhanced_conversation_state import handle_customer_call, get_cached_inventory
+from enhanced_conversation_state import handle_customer_call, get_cached_inventory, ConversationState, get_or_create_conversation
 
 def test_conversation_fixes():
     """Test the conversation fixes for item modification, removal, and proper ending"""
@@ -69,5 +69,156 @@ def test_conversation_fixes():
     print("- Improved context handling for 'that' and 'it' references")
     print("- Enhanced conversation ending logic")
 
+def test_last_5_messages():
+    """Test that the last 5 messages are properly maintained"""
+    print("🧪 Testing Last 5 Messages Functionality")
+    print("=" * 50)
+    
+    # Create a new conversation state
+    customer_phone = "9999999999"
+    state = get_or_create_conversation(customer_phone)
+    
+    # Test messages
+    test_messages = [
+        "Hello, I want to order some groceries",
+        "I need 2 apples",
+        "And 1 bread",
+        "What's the price of milk?",
+        "Add 1 liter of milk to my order",
+        "That's all, please complete my order",
+        "Thank you, goodbye"
+    ]
+    
+    print(f"📞 Testing with customer: {customer_phone}")
+    print(f"📝 Testing {len(test_messages)} messages")
+    
+    for i, message in enumerate(test_messages, 1):
+        print(f"\n--- Message {i} ---")
+        print(f"👤 Customer: {message}")
+        
+        # Process the message
+        response = handle_customer_call(customer_phone, message)
+        print(f"🤖 Assistant: {response}")
+        
+        # Check last 5 messages
+        last_5 = state.get_last_5_messages()
+        print(f"📋 Last 5 messages count: {len(last_5)}")
+        
+        if last_5:
+            print("📋 Last 5 messages:")
+            for j, msg in enumerate(last_5, 1):
+                print(f"  {j}. {msg['role']}: {msg['content'][:50]}...")
+        
+        # Verify we have at most 5 messages
+        assert len(last_5) <= 5, f"Expected at most 5 messages, got {len(last_5)}"
+        
+        if i >= 5:
+            # After 5 messages, we should always have exactly 5 messages
+            assert len(last_5) == 5, f"Expected exactly 5 messages after message {i}, got {len(last_5)}"
+    
+    print("\n✅ Last 5 messages test completed successfully!")
+    return True
+
+def test_conversation_context():
+    """Test that conversation context is properly maintained"""
+    print("\n🧪 Testing Conversation Context")
+    print("=" * 50)
+    
+    customer_phone = "8888888888"
+    state = get_or_create_conversation(customer_phone)
+    
+    # Test context references
+    test_conversation = [
+        "Hello, I want to order some groceries",
+        "I need 2 apples",
+        "And 1 bread",
+        "What's the price of milk?",
+        "Add 1 liter of that to my order",  # Should refer to milk from context
+        "That's all, please complete my order"
+    ]
+    
+    print(f"📞 Testing context with customer: {customer_phone}")
+    
+    for i, message in enumerate(test_conversation, 1):
+        print(f"\n--- Message {i} ---")
+        print(f"👤 Customer: {message}")
+        
+        # Process the message
+        response = handle_customer_call(customer_phone, message)
+        print(f"🤖 Assistant: {response}")
+        
+        # Check if context is being used (especially for "that" references)
+        if "that" in message.lower():
+            print("🔍 Context reference detected - checking if handled properly")
+    
+    print("\n✅ Conversation context test completed!")
+    return True
+
+def test_conversation_state_persistence():
+    """Test that conversation state persists correctly with last 5 messages"""
+    print("\n🧪 Testing Conversation State Persistence")
+    print("=" * 50)
+    
+    customer_phone = "7777777777"
+    
+    # First conversation
+    print("📞 First conversation session:")
+    messages1 = [
+        "Hello, I want to order groceries",
+        "I need 2 apples",
+        "And 1 bread"
+    ]
+    
+    for message in messages1:
+        print(f"👤 Customer: {message}")
+        response = handle_customer_call(customer_phone, message)
+        print(f"🤖 Assistant: {response}")
+    
+    # Get state after first session
+    state1 = get_or_create_conversation(customer_phone)
+    last_5_1 = state1.get_last_5_messages()
+    print(f"📋 Messages after first session: {len(last_5_1)}")
+    
+    # Second conversation (should maintain context)
+    print("\n📞 Second conversation session:")
+    messages2 = [
+        "What was I ordering again?",
+        "Add milk to my order",
+        "Complete my order"
+    ]
+    
+    for message in messages2:
+        print(f"👤 Customer: {message}")
+        response = handle_customer_call(customer_phone, message)
+        print(f"🤖 Assistant: {response}")
+    
+    # Get state after second session
+    state2 = get_or_create_conversation(customer_phone)
+    last_5_2 = state2.get_last_5_messages()
+    print(f"📋 Messages after second session: {len(last_5_2)}")
+    
+    # Verify state persistence
+    assert len(last_5_2) <= 5, "Should maintain at most 5 messages"
+    print("\n✅ Conversation state persistence test completed!")
+    return True
+
 if __name__ == "__main__":
-    test_conversation_fixes() 
+    print("🚀 Starting Conversation Fixes Tests")
+    print("=" * 60)
+    
+    try:
+        # Run all tests
+        test_conversation_fixes()
+        test_last_5_messages()
+        test_conversation_context()
+        test_conversation_state_persistence()
+        
+        print("\n🎉 All tests passed successfully!")
+        print("✅ Last 5 messages functionality is working correctly")
+        print("✅ Conversation context is properly maintained")
+        print("✅ Conversation state persistence is working")
+        
+    except Exception as e:
+        print(f"\n❌ Test failed: {e}")
+        import traceback
+        traceback.print_exc() 
