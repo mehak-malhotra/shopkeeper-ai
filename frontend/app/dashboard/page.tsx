@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ShoppingCart, Package, AlertTriangle, TrendingUp, Clock, ArrowRight } from "lucide-react"
 import { useRouter } from "next/navigation"
+import emailjs from '@emailjs/browser';
 
 interface DashboardStats {
   totalOrders: number
@@ -37,9 +38,12 @@ export default function DashboardPage() {
     pendingOrders: 0,
     lowStockItems: 0,
     totalRevenue: 0,
+    dangerStockItems: 0,
+    dangerStock: 0,
   })
   const [recentOrders, setRecentOrders] = useState<RecentOrder[]>([])
   const [lowStockItems, setLowStockItems] = useState<LowStockItem[]>([])
+  const [dangerStockItems, setDangerStockItems] = useState<LowStockItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
@@ -96,7 +100,41 @@ export default function DashboardPage() {
               currentStock: item.quantity,
               minStock: item.minStock
             }))
-          setLowStockItems(lowStock.slice(0, 3))
+            const dangerStock = invData.data
+            .filter((item: any) => item.quantity < item.minStock * 0.2)
+            .map((item: any) => ({
+              id: item.name,
+              name: item.name,
+              currentStock: item.quantity,
+              minStock: item.minStock,
+              supplyemail: item.supplyemail || " "
+            }))
+            
+            setLowStockItems(lowStock.slice(0, 3))
+            setDangerStockItems(dangerStock.slice(0, 3))
+
+          for(let i=0;i<dangerStock.length;i++){
+
+            const templateParams = {  // Match these keys to your EmailJS template variables
+              email: dangerStock[i].supplyemail,
+              message: `Order ${dangerStock[i].minStock*2} ${dangerStock[i].name}`,
+              // Add other parameters as defined in your EmailJS template
+            };
+            try {
+              const result = await emailjs.send(
+                'Healgrow',
+                'template_bhal623',
+                templateParams,
+                { publicKey: 'YEqgBysf27FVajS9s' }
+              );
+              console.log('Email successfully sent!', result.text);
+              alert('Message Sent Successfully!');
+            } catch (error) {
+              console.error('Failed to send email:', error.text);
+              alert('Failed to send message. Please try again.');
+            }
+          }
+            
         } else throw new Error(invData.message || "Failed to fetch inventory")
       } catch (err: any) {
         setError(err.message || "Unknown error")
@@ -142,7 +180,7 @@ export default function DashboardPage() {
             <p className="text-muted-foreground">Here's what's happening with your store today.</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6">
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium text-muted-foreground">Total Orders</CardTitle>
@@ -173,6 +211,17 @@ export default function DashboardPage() {
               <CardContent>
                 <div className="text-2xl font-bold">{stats.lowStockItems}</div>
                 <p className="text-xs text-muted-foreground">Items need restocking</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Danger Stock</CardTitle>
+                <AlertTriangle className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold">{dangerStockItems.length}</div>
+                <p className="text-xs text-muted-foreground">Items are in danger</p>
               </CardContent>
             </Card>
 
