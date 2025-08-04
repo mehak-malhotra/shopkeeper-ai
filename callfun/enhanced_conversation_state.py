@@ -376,7 +376,7 @@ class ConversationState:
         if not item:
             return False, f"Item '{item_name}' not found in inventory"
         
-        if item['quantity'] < quantity:
+        if item['quantity'] < quantity and item['quantity'] > item['minStock']*0.2:
             return False, f"Only {item['quantity']} {item['name']} available"
         
         # Add to order
