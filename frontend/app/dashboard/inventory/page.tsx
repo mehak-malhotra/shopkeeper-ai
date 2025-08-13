@@ -56,7 +56,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     async function fetchInventory() {
-      const res = await fetch(`http://localhost:5000/api/inventory`, {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/inventory`, {
         headers: {
           'Authorization': `Bearer ${user.token}`
         }
@@ -89,7 +89,7 @@ export default function InventoryPage() {
       minStock: Number.parseInt(newProduct.minStock) || 5,
       category: newProduct.category || "General",
     }
-    const res = await fetch("http://localhost:5000/api/inventory", {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/inventory`, {
       method: "POST",
       headers: { 
         "Content-Type": "application/json",
@@ -102,7 +102,7 @@ export default function InventoryPage() {
       if (data.warning) {
         // Replace the existing product with the updated one (by name)
         setProducts((prev) => prev.map((p) => p.name === data.data.name ? data.data : p))
-        toast({ title: "Product merged", description: data.warning, variant: "warning" })
+        toast({ title: "Product merged", description: data.warning, variant: "destructive" })
       } else {
         setProducts((prev) => [...prev, data.data])
         toast({ title: "Product added", description: `${product.name} has been added to inventory` })
@@ -114,7 +114,7 @@ export default function InventoryPage() {
 
   const handleEditProduct = async () => {
     if (!editingProduct) return
-    const res = await fetch(`http://localhost:5000/api/inventory/${encodeURIComponent(editingProduct.name)}`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/inventory/${encodeURIComponent(editingProduct.name)}`, {
       method: "PUT",
       headers: { 
         "Content-Type": "application/json",
@@ -130,7 +130,7 @@ export default function InventoryPage() {
   }
 
   const handleDeleteProduct = async (productName: string) => {
-    const res = await fetch(`http://localhost:5000/api/inventory/${encodeURIComponent(productName)}`, {
+    const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/inventory/${encodeURIComponent(productName)}`, {
       method: "DELETE",
       headers: {
         'Authorization': `Bearer ${user.token}`
