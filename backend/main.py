@@ -1,7 +1,18 @@
 import os
 from dotenv import load_dotenv
+from flask import Flask
+from flask_cors import CORS
+import os
 
-load_dotenv()
+app = Flask(__name__)
+
+# Allow only your Vercel frontend
+CORS(app, origins=["https://shopkeeper-ai.vercel.app"])
+
+@app.route("/")
+def home():
+    return "Server is running ✅"
+
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
