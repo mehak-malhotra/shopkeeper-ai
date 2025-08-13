@@ -3,16 +3,6 @@ from dotenv import load_dotenv
 from flask import Flask
 from flask_cors import CORS
 import os
-
-app = Flask(__name__)
-
-# Allow only your Vercel frontend
-CORS(app, origins=["https://shopkeeper-ai.vercel.app"])
-
-@app.route("/")
-def home():
-    return "Server is running ✅"
-
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -32,9 +22,25 @@ import pytesseract
 from rapidfuzz import fuzz, process
 import json
 
-# Flask and CORS
+from flask import Flask
+from flask_cors import CORS
+import os
+
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:3000"]}}, supports_credentials=True)
+
+# Allow specific origin + credentials + methods + headers
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "https://shopkeeper-ai.vercel.app"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"]
+)
+
+@app.route("/")
+def home():
+    return "Server is running ✅"
+
 
 # # MongoDB connection
 # try:
