@@ -683,7 +683,10 @@ def get_chatbot_data():
                     "address_confirmed": False,
                     "order_complete": False,
                     "delivery_confirmed": False
-                }
+                },
+                "last_5_messages": [],
+                "conversation_history": [],
+                "chat_buffer": []
             }
         }
         
