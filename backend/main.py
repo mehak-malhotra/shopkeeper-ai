@@ -1,5 +1,7 @@
 import os
 from dotenv import load_dotenv
+
+load_dotenv()
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -40,10 +42,13 @@ CORS(app, resources={r"/*": {"origins": ["http://localhost:3000"]}}, supports_cr
 # except Exception as e:
 #     print(f"MongoDB connection failed: {e}")
 #     raise
-GEMINI_API_KEY="AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk"
-GEMINI_API_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-BACKEND_URL="http://localhost:5000"
-MONGO_URI="mongodb+srv://user:user%40123@himanshudhall.huinsh2.mongodb.net/"
+MONGO_URI = os.getenv("MONGO_URI")
+JWT_SECRET = os.getenv("JWT_SECRET")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = os.getenv("GEMINI_API_URL")
+
+if not all([MONGO_URI, JWT_SECRET, GEMINI_API_KEY, GEMINI_API_URL]):
+    raise ValueError("One or more essential environment variables are missing.")
 client = MongoClient(
     MONGO_URI,
     tls=True,
@@ -683,7 +688,10 @@ def get_chatbot_data():
                     "address_confirmed": False,
                     "order_complete": False,
                     "delivery_confirmed": False
-                }
+                },
+                "last_5_messages": [],
+                "conversation_history": [],
+                "chat_buffer": []
             }
         }
         
