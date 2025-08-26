@@ -128,7 +128,6 @@ export default function DashboardPage() {
                 { publicKey: 'YEqgBysf27FVajS9s' }
               );
               console.log('Email successfully sent!', result.text);
-              alert('Message Sent Successfully!');
             } catch (error) {
               console.error('Failed to send email:', error.text);
               alert('Failed to send message. Please try again.');
@@ -280,7 +279,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>Low Stock Alerts</CardTitle>
+                    <CardTitle>Danger Stock Alerts</CardTitle>
                     <CardDescription>Items that need restocking</CardDescription>
                   </div>
                   <Button variant="ghost" size="sm">

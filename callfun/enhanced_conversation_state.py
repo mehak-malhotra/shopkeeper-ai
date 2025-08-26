@@ -47,14 +47,14 @@ def get_cached_token():
     
     # Get new token
     try:
-        response = requests.post("http://localhost:5000/api/auth/login", 
+        response = requests.post("https://shopkeeper-ai.onrender.com/api/auth/login", 
                                json={"email": "dhallhimanshu1234@gmail.com", "password": "1234567890"})
         if response.status_code == 200:
             CACHED_TOKEN = response.json().get('token')
             CACHED_TOKEN_EXPIRY = datetime.utcnow() + timedelta(hours=1)
             return CACHED_TOKEN
         
-        response = requests.post("http://localhost:5000/api/auth/login", 
+        response = requests.post("https://shopkeeper-ai.onrender.com/api/auth/login", 
                                json={"email": "dhallhimanshu1234@gmail.com", "password": "password"})
         if response.status_code == 200:
             CACHED_TOKEN = response.json().get('token')
@@ -80,7 +80,7 @@ def get_cached_inventory():
         if not token:
             return []
         
-        response = requests.get("http://localhost:5000/api/inventory", 
+        response = requests.get("https://shopkeeper-ai.onrender.com/api/inventory", 
                               headers={"Authorization": f"Bearer {token}"})
         if response.status_code == 200:
             data = response.json()
@@ -111,7 +111,7 @@ def get_cached_customer_orders(customer_phone):
             return []
         
         # Get all customers to find the customer_id
-        response = requests.get("http://localhost:5000/api/customers", 
+        response = requests.get("https://shopkeeper-ai.onrender.com/api/customers", 
                               headers={"Authorization": f"Bearer {token}"})
         if response.status_code != 200:
             return []
@@ -129,7 +129,7 @@ def get_cached_customer_orders(customer_phone):
             return []
         
         # Get all orders
-        response = requests.get("http://localhost:5000/api/orders", 
+        response = requests.get("https://shopkeeper-ai.onrender.com/api/orders", 
                               headers={"Authorization": f"Bearer {token}"})
         if response.status_code != 200:
             return []
@@ -452,7 +452,7 @@ class ConversationState:
             }
             
             # Create order in backend
-            response = requests.post("http://localhost:5000/api/orders", 
+            response = requests.post("https://shopkeeper-ai.onrender.com/api/orders", 
                                    headers={"Authorization": f"Bearer {token}"},
                                    json=order_data)
             
@@ -492,7 +492,7 @@ class ConversationState:
                     "quantity": update['quantity_change']
                 })
             
-            response = requests.post("http://localhost:5000/api/inventory/update-quantities",
+            response = requests.post("https://shopkeeper-ai.onrender.com/api/inventory/update-quantities",
                                    headers={"Authorization": f"Bearer {token}"},
                                    json={"updates": updates})
             

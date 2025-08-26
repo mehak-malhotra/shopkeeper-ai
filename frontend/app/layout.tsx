@@ -8,7 +8,7 @@ import { ThemeProvider } from "@/components/theme-provider"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "ShopKeeper AI Assistant",
+  title: "MartQ",
   description: "AI-powered on-call assistant for shopkeepers",
     generator: 'v0.dev'
 }
