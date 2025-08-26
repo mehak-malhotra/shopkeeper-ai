@@ -43,7 +43,7 @@ export default function ProfilePage() {
     const userData = localStorage.getItem("user")
     if (userData) {
       const user = JSON.parse(userData)
-      fetch(`http://localhost:5000/api/profile`, {
+      fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/profile`, {
         headers: {
           'Authorization': `Bearer ${user.token}`
         }
@@ -64,7 +64,7 @@ export default function ProfilePage() {
     try {
       const userData = localStorage.getItem("user")
       const user = JSON.parse(userData || '{}')
-      const response = await fetch("http://localhost:5000/api/profile", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/profile`, {
         method: "PUT",
         headers: { 
           "Content-Type": "application/json",
@@ -124,7 +124,7 @@ export default function ProfilePage() {
     try {
       const userData = localStorage.getItem("user")
       const user = JSON.parse(userData || '{}')
-      const response = await fetch("http://localhost:5000/api/profile/password", {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/profile/password`, {
         method: "PUT",
         headers: { 
           "Content-Type": "application/json",

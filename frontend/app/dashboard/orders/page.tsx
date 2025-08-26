@@ -50,7 +50,7 @@ export default function OrdersPage() {
     async function fetchOrdersAndCustomers() {
       if (!user.token) return
       // Fetch orders
-      const ordersRes = await fetch(`http://localhost:5000/api/orders`, {
+      const ordersRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/orders`, {
         headers: {
           'Authorization': `Bearer ${user.token}`
         }
@@ -65,7 +65,7 @@ export default function OrdersPage() {
         })))
       }
       // Fetch customers
-      const customersRes = await fetch(`http://localhost:5000/api/customers`, {
+      const customersRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/customers`, {
         headers: {
           'Authorization': `Bearer ${user.token}`
         }
@@ -112,7 +112,7 @@ export default function OrdersPage() {
   const updateOrderStatus = async (orderId: string, newStatus: Order["status"]) => {
     const user = JSON.parse(localStorage.getItem("user") || '{}')
     try {
-      const response = await fetch(`http://localhost:5000/api/orders/${orderId}`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/orders/${orderId}`, {
         method: "PUT",
         headers: { 
           "Content-Type": "application/json",
