@@ -75,8 +75,8 @@ export function AppSidebar() {
             <Store className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>
-            <h2 className="text-lg font-semibold">ShopKeeper AI</h2>
-            <p className="text-xs text-muted-foreground">AI Assistant</p>
+            <h2 className="text-lg font-semibold">MartQ</h2>
+            <p className="text-xs text-muted-foreground">Your Order Companion</p>
           </div>
         </div>
       </SidebarHeader>

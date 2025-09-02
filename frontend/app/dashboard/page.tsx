@@ -62,7 +62,7 @@ export default function DashboardPage() {
       setError(null)
       try {
         // Fetch stats
-        const statsRes = await fetch(`http://localhost:5000/api/dashboard/stats`, {
+        const statsRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/dashboard/stats`, {
           headers: {
             'Authorization': `Bearer ${user.token}`
           }
@@ -72,7 +72,7 @@ export default function DashboardPage() {
         else throw new Error(statsData.message || "Failed to fetch stats")
 
         // Fetch recent orders
-        const ordersRes = await fetch(`http://localhost:5000/api/orders`, {
+        const ordersRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/orders`, {
           headers: {
             'Authorization': `Bearer ${user.token}`
           }
@@ -85,7 +85,7 @@ export default function DashboardPage() {
         } else throw new Error(ordersData.message || "Failed to fetch orders")
 
         // Fetch inventory and filter low stock
-        const invRes = await fetch(`http://localhost:5000/api/inventory`, {
+        const invRes = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/inventory`, {
           headers: {
             'Authorization': `Bearer ${user.token}`
           }
@@ -128,7 +128,6 @@ export default function DashboardPage() {
                 { publicKey: 'YEqgBysf27FVajS9s' }
               );
               console.log('Email successfully sent!', result.text);
-              alert('Message Sent Successfully!');
             } catch (error) {
               console.error('Failed to send email:', error.text);
               alert('Failed to send message. Please try again.');
@@ -280,7 +279,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
-                    <CardTitle>Low Stock Alerts</CardTitle>
+                    <CardTitle>Danger Stock Alerts</CardTitle>
                     <CardDescription>Items that need restocking</CardDescription>
                   </div>
                   <Button variant="ghost" size="sm">

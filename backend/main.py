@@ -1,5 +1,8 @@
 import os
 from dotenv import load_dotenv
+from flask import Flask
+from flask_cors import CORS
+import os
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
@@ -19,9 +22,27 @@ import pytesseract
 from rapidfuzz import fuzz, process
 import json
 
-# Flask and CORS
+from flask import Flask
+from flask_cors import CORS
+import os
+
+load_dotenv()
+
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": ["http://localhost:3000"]}}, supports_credentials=True)
+
+# Allow specific origin + credentials + methods + headers
+CORS(
+    app,
+    resources={r"/api/*": {"origins": "https://shopkeeper-ai.vercel.app"}},
+    supports_credentials=True,
+    allow_headers=["Content-Type", "Authorization"],
+    methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"]
+)
+
+@app.route("/")
+def home():
+    return "Server is running ✅"
+
 
 # # MongoDB connection
 # try:
@@ -40,10 +61,13 @@ CORS(app, resources={r"/*": {"origins": ["http://localhost:3000"]}}, supports_cr
 # except Exception as e:
 #     print(f"MongoDB connection failed: {e}")
 #     raise
-GEMINI_API_KEY="AIzaSyDN6BSxkHUMru8-m51NmfU0SUKGFBbFYmk"
-GEMINI_API_URL="https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
-BACKEND_URL="http://localhost:5000"
-MONGO_URI="mongodb+srv://user:user%40123@himanshudhall.huinsh2.mongodb.net/"
+MONGO_URI = os.getenv("MONGO_URI")
+JWT_SECRET = os.getenv("JWT_SECRET")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_API_URL = os.getenv("GEMINI_API_URL")
+
+if not all([MONGO_URI, JWT_SECRET, GEMINI_API_KEY, GEMINI_API_URL]):
+    raise ValueError("One or more essential environment variables are missing.")
 client = MongoClient(
     MONGO_URI,
     tls=True,
@@ -683,7 +707,10 @@ def get_chatbot_data():
                     "address_confirmed": False,
                     "order_complete": False,
                     "delivery_confirmed": False
-                }
+                },
+                "last_5_messages": [],
+                "conversation_history": [],
+                "chat_buffer": []
             }
         }
         
@@ -979,4 +1006,5 @@ def upload_image_order():
 
 # Run the app
 if __name__ == '__main__':
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))  # Use PORT from Render, default 5000 for local
+    app.run(host="0.0.0.0", port=port, debug=False) 
