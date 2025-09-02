@@ -39,6 +39,7 @@ pytest-asyncio>=0.21.0
 gunicorn>=21.2.0
 uvicorn>=0.23.0
 
+fastapi>=0.104.1
 # Optional: For enhanced voice processing
 # pyaudio>=0.2.11  # Uncomment if using PyAudio for better audio handling
 # webrtcvad>=2.0.10  # Uncomment for voice activity detection 
