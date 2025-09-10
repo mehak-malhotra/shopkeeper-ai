@@ -33,10 +33,10 @@ app = Flask(__name__)
 # Allow specific origin + credentials + methods + headers
 CORS(
     app,
-    resources={r"/api/*": {"origins": "https://shopkeeper-ai.vercel.app"}},
-    supports_credentials=True,
-    allow_headers=["Content-Type", "Authorization"],
-    methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"]
+    # resources={r"/api/*": {"origins": "http://localhost:3000/"}},
+    # supports_credentials=True,
+    # allow_headers=["Content-Type", "Authorization"],
+    # methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"]
 )
 
 @app.route("/")
