@@ -1,5 +1,3 @@
-#### first working draft
-
 # import requests
 # import json
 # import certifi
@@ -276,10 +274,6 @@
 
 # if __name__ == "__main__":
 #     main()
-
-
-### himanshu's draft
-
 import requests
 import json
 import certifi
