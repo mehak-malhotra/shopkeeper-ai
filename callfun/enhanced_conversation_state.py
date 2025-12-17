@@ -21,6 +21,7 @@ client = MongoClient(
     tls=True,
     tlsCAFile=certifi.where()
 )
+
 db = client['shop_db']
 collection = db["inventory"]
 customers_collection = db["customers"]
@@ -48,7 +49,7 @@ def get_cached_token():
     # Get new token
     try:
         response = requests.post("http://localhost:5000/api/auth/login", 
-                               json={"email": "dhallhimanshu1234@gmail.com", "password": "1234567890"})
+                               json={"email": "dhallhimanshu1234@gmail.com", "password": "12345678"})
         if response.status_code == 200:
             CACHED_TOKEN = response.json().get('token')
             CACHED_TOKEN_EXPIRY = datetime.utcnow() + timedelta(hours=1)
@@ -358,14 +359,17 @@ class ConversationState:
             'sugar': ['sugar'],
             'salt': ['salt'],
             'tea': ['tea'],
-            'coffee': ['coffee']
+            'coffee': ['coffee'],
+            'onion': ['onion', 'red onion', 'white onion'],
+            'green chilli': ['green chilli', 'green chili', 'chilli', 'chili']
         }
         
         # Check mappings
         for search_term, keywords in item_mappings.items():
             if search_term in item_name.lower():
                 for item in self.inventory_snapshot:
-                    if any(keyword in item['name'].lower() for keyword in keywords):
+                    norm =item['name'].lower()
+                    if any(keyword in norm for keyword in keywords):
                         return item
         
         return None
@@ -392,6 +396,9 @@ class ConversationState:
         
         # Update inventory
         self.update_inventory_item(item['name'], -quantity)
+        # Mark ordering stage
+        self.stage = "ordering"
+        self.flow_flags["order_started"] = True
         
         return True, f"Added {quantity} {item['name']} to order"
     
@@ -1066,7 +1073,7 @@ if __name__ == "__main__":
     print("=" * 50)
     
     # Test conversation
-    customer_phone = "1234567890"
+    customer_phone = "12345678"
     
     responses = [
         "Hello, I want to order some groceries",
